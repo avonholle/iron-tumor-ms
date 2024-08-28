@@ -1,0 +1,114 @@
+---
+title: 'Table 6: Regression models for stage/grade as predictor'
+author: "Ann Von Holle"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+    number_sections: true
+    toc: yes
+    toc_depth: '4'
+  pdf_document:
+    number_sections: true
+    toc: yes
+    toc_depth: '4'
+geometry: margin=1.5cm
+urlcolor: blue
+linkcolor: magenta
+citecolor: red
+editor_options:
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, 
+                      fig.pos = 'H',
+                      warnings=F,
+                      messages=F,
+                      results = "markup",
+                      fig.keep = "none")
+```
+
+
+
+```{r, include=F}
+# bring in packages 
+require(knitr)
+require(haven)
+require(data.table)
+require(ggplot2)
+require(kableExtra)
+require(labelled)
+library(tidyr)
+library(grid)
+require(boot)
+require(tableone)
+library(tidyverse)
+require(gridExtra)
+require(cowplot)
+library(descr)
+library(readxl)
+library(plyr)
+require(dplyr)
+require(olsrr)
+require(splines)
+require(gtsummary)
+
+require(ggh4x)
+
+```
+
+```{r}
+
+load(file="sampledat.RData") # t.dat0 from table1.Rmd
+
+```
+
+```{r}
+
+# how many stage obs are missing?
+table(is.na(t.dat0$stage))
+
+# how many cases in this data set?
+table(is.na(t.dat0$FU_BCInvD_Event))
+
+```
+
+```{r}
+# do a table of stage by iron dat
+
+attributes(t.dat0$UMN_Iron_Baseline_FE)$label = "Iron, ug/dL"
+attributes(t.dat0$UMN_Iron_Baseline_FERTN)$label = "Ferritin, ug/dL"
+attributes(t.dat0$UMN_Iron_Baseline_FESAT)$label = "Transferrin Saturation, ug/dL"
+
+
+tbl_summary(t.dat0[,c('UMN_Iron_Baseline_FERTN',
+                      'UMN_Iron_Baseline_FE',
+                      'UMN_Iron_Baseline_FESAT',
+                      'stage')],
+            by=stage,
+            missing="no") %>%
+  add_p(test = list(all_continuous() ~ "kruskal.test"),
+        pvalue_fun = function(x) style_pvalue(x, digits = 2))
+
+# KW test for ferritin by stage
+with(t.dat0, kruskal.test(UMN_Iron_Baseline_FERTN ~ stage))
+with(t.dat0, kruskal.test(UMN_Iron_Baseline_FE ~ stage))
+with(t.dat0, kruskal.test(UMN_Iron_Baseline_FESAT ~ stage))
+
+```
+
+```{r}
+
+tbl_summary(t.dat0[,c('UMN_Iron_Baseline_FERTN',
+                      'UMN_Iron_Baseline_FE',
+                      'UMN_Iron_Baseline_FESAT',
+                      'grade.f')],
+            by=grade.f,
+            missing="no") %>%
+  add_p(test = list(all_continuous() ~ "kruskal.test"),
+        pvalue_fun = function(x) style_pvalue(x, digits = 2))
+
+```
+

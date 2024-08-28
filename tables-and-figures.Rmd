@@ -1,0 +1,309 @@
+--- 
+author: "Ann Von Holle"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    includes:
+      in_header: preamble-latex-nobookdown.tex
+    number_sections: yes
+    toc: no
+    highlight: tango
+  html_document:
+    theme: united
+    toc: no
+urlcolor: blue
+linkcolor: blue
+citecolor: blue
+link-citations: yes
+geometry: margin=1.25cm
+always_allow_html: true
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r, include=FALSE}
+
+knitr::opts_chunk$set(echo = F, 
+                      eval = T, 
+#                      fig.width=10,
+#                      fig.height=5,
+#                      fig.cap=T,
+                      message=F,
+                      float=F,
+                      fig.pos="H",
+                      warning = F)
+
+```
+
+
+```{r, include=F, eval=T}
+
+require(knitr)
+require(kableExtra)
+require(data.table)
+require(ggplot2)
+library(dplyr)
+library(tidyr)
+library(plyr)
+#library(expss) # https://cran.r-project.org/web/packages/expss/vignettes/labels-support.html
+# NOTE: expss seems to mask a a lot of functions from other packages listed here.
+
+require(tidyverse)
+require(gtsummary)
+
+# https://stackoverflow.com/questions/53678412/make-na-values-in-table-just-blank-cells-when-using-cell-spec-in-kableextra
+options(knitr.kable.NA = '')
+
+```
+
+
+```{r, child="table1.Rmd", eval=F}
+```
+
+```{r, child="table2.Rmd", eval=F}
+```
+
+```{r, child="table3.Rmd", eval=F}
+```
+
+```{r, child="table4.Rmd", eval=F}
+```
+
+```{r, child="table5.Rmd", eval=F}
+```
+
+
+```{r,  results='markup', eval=T}
+load('t1dat.RData') # d and vars from table1.Rmd
+load("t2.RData"); coefs.dat2 = coefs.dat # from table2.Rmd
+load("t3.RData"); coefs.dat3 = coefs.dat  # from table3.Rmd
+load("t4.RData"); coefs.dat4 = coefs.dat  # from table4.Rmd
+load("t5.RData"); # info.dat from table5.Rmd
+
+```
+
+```{r}
+
+t1 = tbl_summary(d[,c("miss.tumor", vars),],
+            by=miss.tumor,
+            missing="no") %>%
+  modify_caption("Sample characteristics$^1$") 
+
+# source: https://stackoverflow.com/questions/70708265/can-tbl-summary-leave-empty-value-instead-of-na-missing-values
+t1$table_body$stat_1[t1$table_body$stat_1 == "NA (NA, NA)"] <- NA
+t1$table_body$stat_1[t1$table_body$stat_1 == "0 (NA%)"] <- NA
+
+
+t1 %>%
+# convert to kableExtra
+  as_kable_extra(booktabs = TRUE, escape=F) %>% # Source:  https://stackoverflow.com/questions/66552227/r-tbl-summary-knitting-to-pdf-with-gtsummary
+  # reduce font size to make table fit. 
+  # you may also use the `latex_options = "scale_down"` argument here.
+  kableExtra::kable_styling(latex_options = "scale_down")
+
+```
+
+
+\clearpage
+\newpage
+
+\blandscape
+
+```{r, results='markup'}
+
+kable(coefs.dat2[c("exposure.f", "corr", "est.ci", "est.adj.ci", "est2.ci", "est2.adj.ci")],
+      col.names = c("Exposure$^b$", 
+                    "Spearman's Rank Correlation",
+                    "Unadjusted $\\beta$",
+                    "Adjusted $\\beta^c$",
+                    "Odds ratio (95\\% CI)",
+                    "Odds Ratio (95\\% CI)$^c$"),
+      caption="Associations between iron serum biomarkers, tumor size, and metastatic status",
+      booktabs=T,
+      escape=F) %>%
+  kable_styling(position = "left") %>%  
+  column_spec(1, width = "10em") %>%
+  column_spec(2:6, width = "10em") %>%
+  add_header_above(c(" " = 2,
+                     "Largest tumor size$^a$" = 2, 
+                     "Metastatic status" = 2),
+                   escape=F) %>%
+  add_footnote(c("Natural log-transformed",
+                 "Standardized with mean = 0 and standard deviation = 1",
+                 "Adjusted for age (>50 years, yes/no) and BMI at baseline"))
+#  collapse_rows(columns = 1, valign = "top") %>%
+
+
+```
+
+\elandscape
+
+\clearpage
+\newpage
+
+
+# Supplemental materials
+
+\clearpage
+\newpage
+
+<div id="refs"></div>
+
+\beginsupplement
+
+<!-- Note: Figure from Rachel Thompson at C:\Users\vonholleaf\National Institutes of Health\NIEHS-Von Holle BCBB Postdoctoral work - General\iron-tumor\draft\Fig1.png -->
+
+![Flow diagram for the analytic sample](Fig1-update.png)
+
+\blandscape
+
+\clearpage
+\newpage
+
+```{r}
+
+kable(coefs.dat3[c("exposure.f", "corr", "est.ci", "est.adj.ci", "est2.ci", "est2.adj.ci")],
+      col.names = c("Exposure$^b$", 
+                    "Spearman's Rank Correlation",
+                    "Unadjusted $\\beta$",
+                    "Adjusted $\\beta^c$",
+                    "Odds ratio (95\\% CI)",
+                    "Odds Ratio (95\\% CI)$^c$"),
+      row.names = F,
+      caption="Associations between iron biomarkers, tumor size, and metastatic status (excluding diagnoses within 6 months of baseline and over 4 years after baseline and women who took iron supplements 4+ days/week at baseline)",
+      booktabs=T,
+      escape=F) %>%
+  kable_styling(latex_options="scale_down", position = "left") %>%
+  column_spec(1, width = "10em") %>%
+  column_spec(2:6, width = "15em") %>%
+  add_header_above(c(" " = 2,
+                     "Largest tumor size$^a$" = 2, 
+                     "Metastatic outcome (yes vs no)" = 2),
+                   escape=F) %>%
+  pack_rows("Including only diagnoses >= 6 months and < 4 years after baseline iron measurement (n = 975)", 1,3) %>%
+  pack_rows("Excluding women who took iron supplements 4+ days/week (n = 2,271)", 4,6) %>%
+  add_footnote(c("Natural log-transformed",
+                 "Standardized with mean = 0 and standard deviation = 1",
+                 "Adjusted for age (>50 years, yes/no) and BMI at baseline"),
+             notation="alphabet")
+
+
+```
+
+\clearpage
+\newpage
+
+```{r, results='markup'}
+
+kable(coefs.dat4[c("exposure.f", "corr", "est.ci", "est.adj.ci")],
+      col.names = c("Tumor subtype and exposure$^b$", 
+                    "Spearman's Rank Correlation",
+                    "Unadjusted $\\beta$",
+                    "Adjusted $\\beta^c$"),
+      row.names = F,
+      caption="Linear slope estimates for largest tumor size$^a$ by iron measure and tumor subtype",
+      booktabs=T,
+      escape=F) %>%
+  kable_styling(latex_options="scale_down", position = "left") %>%  
+  column_spec(1, width = "15em") %>%
+  column_spec(2:4, width = "20em") %>%
+  add_header_above(c(" " = 2,
+                     "Largest tumor size$^a$" = 2),
+                   escape=F) %>%
+  pack_rows("HR+/HER2- (n = 1,617)", 1,3) %>%
+  pack_rows("HR+/HER2+ or HR-/HER2+ (n = 243)", 4,6) %>%
+  pack_rows("HR-/HER2- (n = 201)", 7,9) %>%
+  add_footnote(c("Natural log-transformed",
+                 "Standardized with mean = 0 and standard deviation = 1",
+                 "Adjusted for age (>50 years, yes/no) and BMI at baseline"),
+           notation="alphabet")
+
+
+```
+
+
+\clearpage
+\newpage
+
+```{r}
+
+kable(info.dat[c( "ind.f", 
+                 "exposure.f",
+                 "threshold.f",
+                 "median.iqr0",
+                 "n0",
+                 "median.iqr1",
+                 "n1")],
+      row.names = F,
+      col.names = c("High/low indictor",
+                    "Iron measure",
+                    "Index group (by dichotomized iron threshold)",
+                    "Tumor size, median (IQR)",
+                    "n",
+                    "Tumor size, median (IQR)",
+                    "n"),
+      booktabs=T,
+      caption="Median largest tumor size by menopause status at baseline and iron status extreme thresholds") %>%
+  pack_rows(index = table(info.dat$meno.f))  %>%
+  add_header_above(c(" " = 3, "Index group" = 2, "Referent group" = 2)) %>%
+  column_spec(3, width = "10em") %>%
+  column_spec(column=c(4,6), width = "8em") %>% 
+  collapse_rows(1, valign="top") %>%
+  kable_styling(position = "left") 
+
+
+```
+
+\clearpage
+\newpage
+
+```{r}
+
+load(file="sampledat.RData") # t.dat0 from table1.Rmd
+
+attributes(t.dat0$UMN_Iron_Baseline_FE)$label = "Iron, ug/dL"
+attributes(t.dat0$UMN_Iron_Baseline_FERTN)$label = "Ferritin, ug/dL"
+attributes(t.dat0$UMN_Iron_Baseline_FESAT)$label = "Transferrin Saturation, ug/dL"
+
+t6 = tbl_summary(t.dat0[,c('UMN_Iron_Baseline_FERTN',
+                      'UMN_Iron_Baseline_FE',
+                      'UMN_Iron_Baseline_FESAT',
+                      'stage')],
+            by=stage,
+            missing="no") %>%
+  add_p(test = list(all_continuous() ~ "kruskal.test"),
+        pvalue_fun = function(x) style_pvalue(x, digits = 2)) %>%
+  modify_caption("Comparison of baseline iron values by breast cancer stage")
+
+
+t6 %>%
+# convert to kableExtra
+  as_kable_extra(booktabs = TRUE, escape=F)  # Source:  https://stackoverflow.com/questions/66552227/r-tbl-summary-knitting-to-pdf-with-gtsummary
+
+```
+
+\clearpage
+\newpage
+
+```{r}
+
+t7 = tbl_summary(t.dat0[,c('UMN_Iron_Baseline_FERTN',
+                      'UMN_Iron_Baseline_FE',
+                      'UMN_Iron_Baseline_FESAT',
+                      'grade.f')],
+            by=grade.f,
+            missing="no") %>%
+  add_p(test = list(all_continuous() ~ "kruskal.test"),
+        pvalue_fun = function(x) style_pvalue(x, digits = 2)) %>%
+  modify_caption("Comparison of baseline iron values by breast cancer grade")
+
+
+t7 %>%
+# convert to kableExtra
+  as_kable_extra(booktabs = TRUE, escape=F)  # Source:  https://stackoverflow.com/questions/66552227/r-tbl-summary-knitting-to-pdf-with-gtsummary
+
+```
+
+
+\elandscape

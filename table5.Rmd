@@ -1,0 +1,263 @@
+---
+title: 'Table 5: median tumor size by iron thresholds'
+author: "Ann Von Holle"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+    number_sections: true
+    toc: yes
+    toc_depth: '4'
+  pdf_document:
+    number_sections: true
+    toc: yes
+    toc_depth: '4'
+geometry: margin=1.5cm
+urlcolor: blue
+linkcolor: magenta
+citecolor: red
+editor_options:
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, 
+                      fig.pos = 'H',
+                      warnings=F,
+                      messages=F,
+                      results = "hide",
+                      fig.keep = "none")
+```
+
+
+```{r, include=F}
+# bring in packages 
+require(knitr)
+require(haven)
+require(data.table)
+require(ggplot2)
+require(kableExtra)
+require(labelled)
+library(tidyr)
+library(grid)
+require(boot)
+require(tableone)
+library(tidyverse)
+require(gridExtra)
+require(cowplot)
+library(descr)
+library(readxl)
+library(plyr)
+require(dplyr)
+require(olsrr)
+require(splines)
+require(gtsummary)
+
+```
+
+```{r}
+
+load(file="sampledat.RData") # t.dat0 from table1.Rmd
+table(t.dat0$subtype)
+table(t.dat0$HR_Menopause)
+```
+
+
+```{r}
+
+# Function to do:
+# median (IQR) for groups according to cutpoints
+
+# NOTE: this code is adapted from sens3.sas (found in iron-tumor-sas-code.Rmd and .html)
+
+
+get.stats = function(exposure, low.ind, threshold, meno){
+  
+  # outcome = "largest.tumor"; exposure = "UMN_Iron_Baseline_FERTN" ; threshold=12; meno=1; low.ind=0 # debug
+  
+  # make data ================================================
+  # ========================================================
+  # column with metal variable name
+if(meno==1){
+  dat = data.frame(t.dat0[which(t.dat0$tumor.dat==1 & t.dat0$HR_Menopause==1),]) # select people with tumor data
+} else if (meno==0) {
+  dat = data.frame(t.dat0[which(t.dat0$tumor.dat==1 & t.dat0$HR_Menopause==0),])   } else{
+    NULL
+  }
+    
+  colnum.outcome = "largest.tumor"
+  dat$outcome = as.numeric(dat[, colnum.outcome])
+  
+  colnum.exposure = which(names(dat) %in% exposure)
+  dat$exposure = as.numeric(dat[, colnum.exposure])
+
+    dat1 = dat[dat$exposure<=threshold,]
+    nrow.dat1 = nrow(dat1)
+    
+    median = median(dat1$outcome, na.rm=T); median
+    iqr25 = quantile(dat1$outcome, 0.25, na.rm=T); iqr25
+    iqr75 = quantile(dat1$outcome, 0.75, na.rm=T); iqr75
+    median.iqr1 = paste0(round(median, 1), " (", 
+                        round(iqr25,1),
+                        " - ",
+                        round(iqr75, 1), ")")
+    
+    dat0 = dat[dat$exposure>=threshold,]
+    nrow.dat0 = nrow(dat0)
+
+    median = median(dat0$outcome, na.rm=T); median
+    iqr25 = quantile(dat0$outcome, 0.25, na.rm=T); iqr25
+    iqr75 = quantile(dat0$outcome, 0.75, na.rm=T); iqr75
+    
+    median.iqr0 = paste0(round(median, 1), " (", 
+                        round(iqr25,1),
+                        " - ",
+                        round(iqr75, 1), ")")
+
+  # make data frame with regression coefficients
+  dat1 = data.frame(exposure = exposure,
+                    threshold=threshold,
+                    ind = low.ind,
+                    meno = meno,
+                    n0 = nrow.dat0,
+                    median.iqr0 = median.iqr0,
+                    n1 = nrow.dat1,
+                    median.iqr1 = median.iqr1)
+  
+  # run regression
+  # ========================================================
+
+  # return data 
+  return(list(dat1)) # 1. return data frame 
+}
+
+
+```
+
+
+```{r}
+
+
+
+# Run function over all outcomes and exposures
+#outcome.list = c("largest.tumor")
+
+meno = c(rep(0,9),
+         rep(1,9))
+
+exposure = c(rep('UMN_Iron_Baseline_FERTN', 3),
+             'UMN_Iron_Baseline_FESAT',
+             'UMN_Iron_Baseline_FERTN',
+             rep('UMN_Iron_Baseline_FESAT', 4))
+
+threshold = c(12,25,45,20, 300, 45,50,55,60)
+low.ind = c(rep(1,4), rep(0,5))
+
+# get all combos of exposure, thresholds and low/high indicator
+combo = data.frame(m = meno,
+                   e = rep(exposure,2),
+                   i = rep(low.ind,2),
+                   a = rep(threshold,2))
+combo                   
+
+# run get.stats function over all combos
+
+run.models = mapply(get.stats,
+                    exposure = as.character(combo$e),
+                    low.ind = combo$i,
+                    threshold = combo$a,
+                    meno=combo$m,
+                    USE.NAMES = T,
+                    SIMPLIFY=F)
+
+run.models[1] # check
+
+```
+
+
+
+```{r}
+# function to extract out parts of list from function run over metals
+
+# source: https://stackoverflow.com/questions/43014782/how-to-get-the-nth-element-of-each-item-of-a-list-which-is-itself-a-vector-of-u
+
+fun1 <- function(lst, n){
+         sapply(lst, `[`, n)
+}
+
+```
+
+```{r}
+
+# consolidate all rows into one data frame (from first element in list, the regression coefficients)
+info.dat = data.frame(fun1(run.models,1) %>% bind_rows()) 
+info.dat
+
+```
+
+# Table of regression coefficients
+
+```{r, results='markup'}
+
+names(info.dat)
+
+
+# more data handling
+# =================================
+# make factors for table
+levels(factor(info.dat$ind))
+info.dat$ind.f = factor(info.dat$ind,
+                        labels=c("High","Low"))
+
+levels(factor(info.dat$exposure))
+info.dat$exposure.f = factor(info.dat$exposure,
+                             labels = c("Ferritin", "Transferrin Saturation"))
+
+levels(factor(info.dat$meno))
+info.dat$meno.f = factor(info.dat$meno,
+                         labels = c("Premenopausal",
+                                    "Postmenopausal"))
+
+info.dat$n = with(info.dat, paste0(n1,"/",n0))# ifelse(ind==1, paste0(n0,"/",n1),
+                                   #ifelse(ind==0, paste0(n1,"/",n0), NA)))
+
+info.dat$threshold.f = with(info.dat, 
+                            ifelse(ind==1, paste0("<=",threshold),
+                                   ifelse(ind==0, paste0(">=", threshold), NA)))
+
+# order data for table
+info.dat = info.dat[order(info.dat$meno.f, 
+                            info.dat$ind.f, 
+                          info.dat$exposure.f,
+                            info.dat$threshold),]
+
+kable(info.dat[c( "ind.f", 
+                 "exposure.f",
+                 "threshold.f",
+                 "median.iqr0",
+                 "n0",
+                 "median.iqr1",
+                 "n1")],
+      row.names = F,
+      col.names = c("High/low indictor",
+                    "Iron measure",
+                    "Index group (by dichotomized iron threshold)",
+                    "Tumor size, median (IQR)",
+                    "n",
+                    "Tumor size, median (IQR)",
+                    "n")) %>%
+  pack_rows(index = table(info.dat$meno.f))  %>%
+  add_header_above(c(" " = 3, "Index group" = 2, "Referent group" = 2)) %>%
+  column_spec(3, width = "10em") %>%
+  column_spec(column=c(4,6), width = "8em") %>% 
+  collapse_rows(1, valign="top") %>%
+  kable_styling(position = "left") 
+
+```
+
+```{r}
+
+save(info.dat, file="t5.RData")
+
+```

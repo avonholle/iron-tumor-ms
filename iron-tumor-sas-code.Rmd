@@ -1,0 +1,1807 @@
+---
+title: "Associations between Serum Iron Biomarkers and Breast Cancer Tumor Size"
+output: 
+  html_document:
+    toc: yes
+    toc_depth: '2'
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, echo=FALSE, eval=T}
+saspath <- '/usr/local/SAS94/SASFoundation/9.4/sas'
+#saspath <- 'C:/Program Files/SASHome/SASFoundation/9.4/sas.exe'
+sasopts <- "-ls 80 -ps 60 -log 'logs/' -nocenter -nodate -nofmterr" # see http://bit.ly/1QB4ZTb
+```
+
+The following is Rachel's SAS code from her github repo at https://github.com/iron-and-tumorsize-sip2021. 
+
+<!-- NOTE: following script from 'Data Processing Script.sas' file on Rachel's github repo for this project (https://github.com/iron-and-tumorsize-sip2021) -->
+
+<!-- NOTE: re-run this chunk if you have new data -->
+
+# Data Processing Script.sas
+
+```{r, engine='sas', engine.path=saspath,  results='markup', echo=TRUE, message=T, warning=FALSE, eval=F}
+
+/* Associations between Serum Iron Levels and Tumor Size 
+	Data Processing and Manipulations
+	Data source: The Sister Study
+	Author: Rachel L. Thompson
+	Date: 08/04/2021
+*/
+
+/* Set libraries and import SAS dataset */
+libname sister "../Sister Study/data/";
+OPTIONS NOFMTERR FMTSEARCH=(sister.sisformats);
+
+/* Import complete sister study dataset with relevant variables, n = 50,884 */
+data sisdat;
+	set sister.dr00224_03_01;
+	keep PSID /* id for person*/
+	UMN_Iron /* Indicator for Iron study*/
+		UMN_Iron_Subcohort /* Indicator for Iron study subcohort */
+		FU_BCInvD_event /* breast cancer event variable - incident invasive BC or DCIS cases */
+		UMN_Iron_SCL_BCInvD_Event /* UMN Iron study event variable */
+		UMN_iron_baseline_FE /* baseline iron in ug/dL */
+		UMN_iron_baseline_FERTN /* baseline ferritin in ug/dL */
+		UMN_iron_baseline_FESAT /* baseline % ferritin saturation (calculated) */
+		EX_BMI_FINAL /* final examination BMI at baseline */
+		EX_BMI_CDC_FINAL /* final examination BMI at baseline, CDC categorized */
+		AgeExact_Baseline /* exact age at baseline */
+		FU_BCInvD_DxAgeExactMax /* Max age at event */
+		FU_BCInvD_DxAgeExactMin /* Min age at event */
+		DR224_BCInvD_DXAgeExactImp /* age at 1st invasive breast cancer or DCIS diagnosis, imputed for missing vals */
+		PG_MenarcheAge /* Age at menarche */
+		SM_smokestatusN /* smoking status at baseline */
+		SE18 /* highest level of education completed */
+		AL_Status /* categorized alcohol status */
+		SE_RACE_ETH /* race/ethnicity */
+		HR_menopause /* binary menopause status at baseline */
+		FU_BCInvD_EOFAgeExact /* Exact Age at End of Follow-up */
+		FU_BCInvD_EOFAge /* Integer age at end of follow-up */
+		FU_BCInvNoD_PG_AgeExFirstBirth /* Exact age at first pregnancy */
+		FU_BCInvD_MR3  /* First invasive BC or DCIS, total number of tumors */
+		FU_BCInvD_MR6_01 FU_BCInvD_MR6_02 FU_BCInvD_MR6_03 
+		/* First invasive BC or DCIS, tumor (1, 2, 3) size - invasive tumor */
+		FU_BCInvD_MR7_01 FU_BCInvD_MR7_02 FU_BCInvD_MR7_03
+		/* First invasive BC or DCIS, tumor (1, 2, 3) size - in situ tumor */
+		FU_BCInvD_DxStageM /* Metastasis classification from MR or BCFU data, including first invasive BC or DCIS */
+		CA59 /* how was BC first discovered? */
+		HR_MenopauseAgeExact /* exact age at menopause */
+		FU_BC_DxPR_Result /* PR subtype indicator */
+		FU_BC_DxEr_Result /* ER subtype indicator */
+		FU_BCInvD_DxHER2_Result /* HER2 subtype indicator */
+		dh_vm_yn4_itm16r /* Iron supplements 4+/wk, y/n */
+	  FU_BCInvD_DxStage; /* CALC: 1st invasive breast cancer or DCIS - Breast cancer stage for dx [from MR or BCFU data] */
+run;
+
+/* Process entire dataset and calculate new variables: */
+data sisdat;
+	set sisdat;
+	/* For women missing exact age at end of follow-up, add random decimal point to integer age */
+	if FU_BCInvD_EOFAgeExact in (. .M .I .W)
+		then FU_BCInvD_EOFAgeExact = FU_BCInvD_EOFAge + round(rand('UNIF', 0, 1), 0.1);
+
+	/* Among women with menopause at baseline, categorize menopausal age at baseline */
+	if HR_MenopauseAgeExact <= 50 then meno_age = "<= 50";
+	else if HR_MenopaueAgeExact > 50 then meno_age = "> 50";
+	
+	/* Create new variable which categorizes age at first birth */
+	if FU_BCInvNoD_PG_AgeExFirstBirth in (. .B .D .I .M .R .W) then firstbirth_cat = "Missing  ";
+	else if FU_BCInvNoD_PG_AgeExFirstBirth in (.L .N) then firstbirth_cat = "No Birth";
+	else if FU_BCInvNoD_PG_AgeExFirstBirth <= 20 then firstbirth_cat = "<=20";
+	else if FU_BCInvNoD_PG_AgeExFirstBirth <= 24 then firstbirth_cat = ">20-24";
+	else if FU_BCInvNoD_PG_AgeExFirstBirth <= 29 then firstbirth_cat = ">24-29";
+	else if FU_BCInvNoD_PG_AgeExFirstBirth > 29 then firstbirth_cat = ">29";
+
+	/* Dichotomize age at baseline to up to 50 vs. over 50 */
+	if AgeExact_Baseline <= 50 then age50 = "<= 50 years";
+	else if AgeExact_Baseline > 50 then age50 = "> 50 years";
+run;
+
+/* Check - Indicator for Iron cohort: 
+	UMN_Iron */
+proc freq data=sisdat;
+	tables UMN_IRON /nocum;
+run;
+
+/* Subset to UMN iron cohort observations only (n = 6,008) */
+data sisdat_subset;
+	set sisdat;
+	where UMN_IRON = 1;	
+run;
+
+/* Turn subcohort variable into a binary variable */
+data sisdat_subset;
+	set sisdat_subset;
+	if UMN_Iron_Subcohort = . then UMN_Iron_Subcohort = 0;
+run;
+
+/* Check - Iron Subcohort * event status */
+/* Total Subcohort cases in this release: n = 256; total subcohort non-cases: n = 2,943 -> total = 3,199
+	(One new unknown timing from last release) */
+/* Total non-subcohort cases in this release: n = 2,795; total non-subcohort non-cases: n = 10 -> total = 2,805 */
+/* 10 people not in subcohort AND do not have an event */
+/* one of these is labeled as a case with UMN_Iron_SCL_BCInvD_Event */
+
+proc freq data=sisdat_subset;
+	tables UMN_Iron_Subcohort*FU_BCInvD_event / nocum norow nocol nopercent missprint;
+run;
+
+/* Exclude:
+	- participants with unknown event timing (n = 4) 
+	6,008 - 4 = 6,004 */
+data sisdat_subset;
+	set sisdat_subset;
+	if FU_BCInvD_event = .U then delete;
+run;
+
+/* For participants missing a follow-up age, take the median for min/max age (n = 9)*/
+data sisdat_subset;
+	set sisdat_subset;
+	FU_BCInvD_DxAgeExactMedian = median(FU_BCInvD_DxAgeExactMin, FU_BCInvD_DxAgeExactMax);
+	if FU_BCInvD_EOFAgeExact = . then FU_BCInvD_EOFAgeExact = FU_BCInvD_DxAgeExactMedian;
+run;
+
+/* Exclude:
+	- follow-up time = 0 (n = 35)
+	6,004 - 35 = 5,969*/
+data sisdat_subset;
+	set sisdat_subset;
+	FU_time = FU_BCInvD_EOFAgeExact - AgeExact_baseline;
+	if FU_time = 0 then delete;
+run;
+
+/* Exclude:
+	- participants with uncertain event status following case-cohort sampling (n = 10)
+	(these are people who are not in the subcohort and do not have an event according to
+	the "FU_BCInvD_Event" variable... these correspond to people who were cases in previous
+	versions but no longer classified as such in the current release) 
+	5,969 - 10 = 5,959 */
+data sisdat_subset;
+	set sisdat_subset;
+	if FU_BCInvD_Event = 0 AND UMN_Iron_Subcohort = 0 then delete;
+run;
+
+/*	Exclude:
+		- women with all three iron measures missing 
+		(UMN_iron_baseline_FE, UMN_iron_baseline_FERTN, UMN_iron_baseline_FESAT) (n = 56) 
+		5,959 - 56 = 5,903 */
+data sisdat_subset;
+	set sisdat_subset;
+	if UMN_iron_baseline_FE = . AND UMN_iron_baseline_FERTN = . AND UMN_iron_baseline_FESAT = .
+		then delete;
+run;
+
+/* Create UMN Iron cohort case-only data subset (n = 3,007) */ 
+data sisdat_subset_cases;
+	set sisdat_subset;
+	where FU_BCInvD_event = 1;
+run;
+
+/* Calculate tumor size variables:
+	largest_tumor - size of largest invasive or in situ tumor
+	avg_tumor - average size of all invasive and in-situ tumors 
+
+	Additionally add custom BMI category variable with 4 categories, and	
+	add an "unknown" category for CA59 (mode of detection variable as proxy for interval cancer) 
+	natural log-transform response variables and iron measures */
+data sisdat_subset_cases;
+	length bmicat $25. CA59_cat $30.;
+	set sisdat_subset_cases;
+
+	/* Set tumor of size 95 cm to missing */
+	if FU_BCInvD_MR6_01 > 90 then FU_BCInvD_MR6_01 = .;
+
+	/* create largest tumor variable as the largest invasive or in-situ tumor */
+	largest_tumor = max(FU_BCInvD_MR6_01, FU_BCInvD_MR6_02, FU_BCInvD_MR6_03,
+		FU_BCInvD_MR7_01, FU_BCInvD_MR7_02, FU_BCInvD_MR7_03);
+
+	/* create avg_tumor variable as the arithmetic mean size of all invasive or in-situ tumors by patient */
+	avg_tumor = mean(FU_BCInvD_MR6_01, FU_BCInvD_MR6_02, FU_BCInvD_MR6_03,
+		FU_BCInvD_MR7_01, FU_BCInvD_MR7_02, FU_BCInvD_MR7_03);
+
+	/* Create custom BMI category with categories underweight, normal weight, overweight, and obese */
+	if  EX_BMI_CDC_final in (. .W .R .D .M) then bmicat = "Missing";
+	else if  EX_BMI_CDC_final = 1 then bmicat = "18.5 and Below";
+	else if  EX_BMI_CDC_final = 2 then bmicat = "18.5 to 24.9";
+	else if  EX_BMI_CDC_final = 3 then bmicat = "25.0 to 29.9";
+	else if  EX_BMI_CDC_final in (4 5 6) then bmicat = "30.0 and Above";
+
+	/* create an "unknown" category for CA59 */
+	if CA59 in (. .M) then CA59_cat = "Unknown";
+	else if CA59 in (1 3 4) then CA59_cat = "Self-Identified (Interval)";
+	else if CA59 = 2 then CA59_cat = "Regular Screening";
+
+	/* Natural log - transform response variables */
+	log_largest_tumor = log(largest_tumor);
+	log_avg_tumor = log(avg_tumor);
+
+	/* Natural log - transform predictors (in case needed) */
+	log_fe = log(UMN_iron_baseline_fe);
+	log_fertn = log(UMN_iron_baseline_fertn);
+	log_fesat = log(UMN_iron_baseline_fesat);
+run;
+
+
+/* Create final analytic subset as set of "complete cases" ...
+	-> Exclude cases where tumor size variables are not equal to missing  (n = 2,494) */
+data sisdat_subset_complete_cases;
+	set sisdat_subset_cases;
+	where largest_tumor ne . AND avg_tumor ne .;
+run;
+
+/* Save all final datasets to SAS library */
+/* Full dataset with relevant variables: */
+data sister.sisdat;
+	set sisdat;
+run;
+
+/* UMN Iron subset, including both cases and non-cases: */
+data sister.sisdat_subset;
+	set sisdat_subset;
+run;
+
+/* UMN Iron subset, cases only: */
+data sister.sisdat_subset_cases;
+	set sisdat_subset_cases;
+run;
+
+/* UMN Iron subset, cases with tumor size data only */
+data sister.sisdat_subset_complete_cases;
+	set sisdat_subset_complete_cases;
+run;
+```
+
+<!-- NOTE: following script from 'Univariate Stats.sas' file on Rachel's github repo for this project (https://github.com/iron-and-tumorsize-sip2021) 
+
+NOTE: graphics don't work when I am using R markdown to run SAS code. commented out all histograms below. Graphics can be obtained by running the code in submit-1.sh shell script, which runs each SAS file in SAS on pandora.
+-->
+
+# Univariate Stats.sas
+
+```{r, engine='sas', engine.path=saspath, results='markup', echo=TRUE, message=T, warning=FALSE, eval=T}
+
+/* Associations between Serum Iron Levels and Tumor Size 
+	Descriptive Univariate Statistics
+	Data source: The Sister Study
+	Author: Rachel L. Thompson
+	Date: 08/04/21
+*/
+
+/* Set SAS library and formats */
+libname sister "../Sister Study/data/";
+OPTIONS NOFMTERR FMTSEARCH=(sister.sisformats);
+
+/* Output PDF file settings*/
+ods pdf file = "Univariate Stats Output.pdf" gtitle gfootnote style=journal2a;
+ods noproctitle;
+options nodate dlcreatedir leftmargin=.2in rightmargin=.2in topmargin=.2in bottommargin=.2in
+	orientation=portrait center printerpath=pdf;
+ods escapechar="^";
+
+%let maintitle = ^S={font=('Times New Roman', 16pt, bold) just=center};
+%let maintitle2 = ^S={font=('Times New Roman', 16pt) just=center};
+
+
+ods text= "&maintitle ^n^n^nAssociations between Serum Iron and Tumor Size";
+ods text= "&maintitle ^nAnalysis from the Sister Study Cohort";
+ods text= "&maintitle2 ^nSummary Statistics Comprising Tables 1 and 2";
+ods text= "&maintitle2 ^n^nLast Revision: August 4th, 2021";
+ods text= "&maintitle2 ^nAuthor: Rachel L. Thompson, M.S., NIEHS 2021 Summer Research Intern";
+
+ods startpage=now;
+ods graphics on;
+	
+
+title "Case-Cohort Subset - n = 5,903";
+
+proc freq data=sister.sisdat_subset;
+	title2 "Breast Cancer Event Variable - Incident Invasive BC or DCIS";
+	tables FU_BCInvD_event / nocum;
+run;
+
+title2 "Baseline Variable Statistics - Grouped by Case Status";
+
+proc univariate data=sister.sisdat_subset;
+	title3 "Iron Measures at Baseline";
+	class FU_BCInvD_event;
+	var UMN_iron_baseline_FE 
+		UMN_iron_baseline_FERTN
+		UMN_iron_baseline_FESAT;
+	histogram UMN_iron_baseline_FE
+		UMN_iron_baseline_FERTN
+		UMN_iron_baseline_FESAT ;
+run;
+
+proc univariate data=sister.sisdat_subset;	
+	title3 "BMI at Baseline";
+	class FU_BCInvD_event;
+	var EX_BMI_FINAL;
+	histogram EX_BMI_FINAL;
+run;
+
+proc freq data=sister.sisdat_subset;
+	title3 "BMI at Baseline";
+	tables 	EX_BMI_CDC_FINAL*FU_BCInvD_event / nocum norow nopercent;
+run;
+
+proc univariate data=sister.sisdat_subset;	
+	title3 "Additional Variables Describing the Sample (Not All May be Needed/Used)";
+	class FU_BCInvD_event;
+	var AgeExact_Baseline 
+		FU_BCInvD_EOFAgeExact
+		PG_MenarcheAge
+		FU_BCInvNoD_PG_AgeExFirstBirth
+		fu_time;
+	histogram AgeExact_Baseline 
+		FU_BCInvD_EOFAgeExact 
+		PG_MenarcheAge
+		FU_BCInvNoD_PG_AgeExFirstBirth;
+run;
+
+proc freq data=sister.sisdat_subset;
+	title3 "Additional Variables Describing the Sample (Not All May be Needed/Used)";
+	tables (SM_smokestatusN 
+		SE18 
+		AL_Status  
+		SE_RACE_ETH
+		firstbirth_cat
+		age50) * FU_BCInvD_event/ NOCUM NOROW NOPERCENT;
+run;
+
+proc freq data=sister.sisdat_subset;
+	title3 "Additional Variables Describing the Sample (Not All May be Needed/Used)";
+	tables HR_menopause * FU_BCInvD_event/ NOCUM NOROW NOPERCENT;
+run;
+
+proc freq data=sister.sisdat_subset;
+	title3 "Additional Variables Describing the Sample (Not All May be Needed/Used)";
+	where HR_menopause = 1;
+	tables meno_age * FU_BCInvD_event/ NOCUM NOROW NOPERCENT;
+run;
+
+
+title "Overall Sister Study Cohort - (n = 50,884)";
+
+title2 "Baseline Variable Statistics";
+
+proc univariate data=sister.sisdat;
+	title3 "BMI at Baseline";	
+	var EX_BMI_FINAL;
+	histogram EX_BMI_FINAL;
+run;
+
+proc freq data=sister.sisdat;
+	title3 "BMI at Baseline";
+	tables 	EX_BMI_CDC_FINAL / nocum;
+run;
+
+proc univariate data=sister.sisdat;
+	title3 "Additional Variables Describing the Sample (Not All May be Needed/Used)";	
+	var AgeExact_Baseline 
+		FU_BCInvD_EOFAgeExact
+		PG_MenarcheAge
+		FU_BCInvNoD_PG_AgeExFirstBirth;
+	histogram AgeExact_Baseline 
+		FU_BCInvD_EOFAgeExact 
+		PG_MenarcheAge
+		FU_BCInvNoD_PG_AgeExFirstBirth;
+run;
+
+proc freq data=sister.sisdat;
+	title3 "Additional Variables Describing the Sample (Not All May be Needed/Used)";
+	tables SM_smokestatusN 
+		SE18 
+		AL_Status  
+		SE_RACE_ETH 
+		firstbirth_cat
+		age50/ NOCUM;
+run;
+
+proc freq data=sister.sisdat;
+	title3 "Additional Variables Describing the Sample (Not All May be Needed/Used)";
+	tables HR_menopause / NOCUM ;
+run;
+
+proc freq data=sister.sisdat;
+	title3 "Additional Variables Describing the Sample (Not All May be Needed/Used)";
+	where HR_menopause = 1;
+	tables meno_age / NOCUM ;
+run;
+
+
+title "UMN Iron Study - Cases Only (n = 3,007)";
+
+title2 "Outcome Variables of Interest";
+
+proc freq data=sister.sisdat_subset_cases;
+	title3 "Tumor Count";
+	tables FU_BCInvD_MR3 / nocum;
+run;
+
+proc univariate data=sister.sisdat_subset_cases;
+	title3 "Continuous Tumor Size Variables (Raw)";
+	var FU_BCInvD_MR6_01 FU_BCInvD_MR6_02 FU_BCInvD_MR6_03
+		FU_BCInvD_MR7_01 FU_BCInvD_MR7_02 FU_BCInvD_MR7_03;
+	histogram FU_BCInvD_MR6_01 FU_BCInvD_MR6_02 FU_BCInvD_MR6_03
+		FU_BCInvD_MR7_01 FU_BCInvD_MR7_02 FU_BCInvD_MR7_03;
+run;
+
+proc univariate data=sister.sisdat_subset_cases;
+	title3 "Calculated Tumor Size Variables - Largest and Average Tumor Size";
+	var largest_tumor avg_tumor;
+	histogram largest_tumor avg_tumor;
+run;
+
+proc freq data=sister.sisdat_subset_cases;
+	title3 "Metastatic Status";
+	tables FU_BCInvD_DxStageM / nocum;
+run;
+
+
+title2 "Outcome Variables Stratified by BMI Category";
+
+proc freq data=sister.sisdat_subset_cases;
+	title3 "BMI category * tumor count";
+	tables bmicat*FU_BCInvD_MR3 / nocum nocol nopercent;
+run;
+
+proc univariate data=sister.sisdat_subset_cases;
+	title3 "BMI category * tumor size";
+	class bmicat;
+	var largest_tumor avg_tumor;
+	histogram largest_tumor avg_tumor;
+run;
+
+proc freq data=sister.sisdat_subset_cases;
+	title3 "BMI category * metastatic status";
+	tables bmicat*FU_BCInvD_DxStageM / nocum nocol nopercent;
+run;
+
+title2 "Outcome Variables Stratified by Mode of Cancer Detection";
+
+proc freq data=sister.sisdat_subset_cases;
+	title3 "Mode of Detection (Proxy for Interval Cancer Diagnosis";
+	tables CA59_cat / nocum;
+run;
+
+proc freq data=sister.sisdat_subset_cases;
+	title3 "Interval cancer * tumor count";
+	tables CA59_cat*FU_BCInvD_MR3 / nocum nocol nopercent;
+run;
+
+proc univariate data=sister.sisdat_subset_cases;
+	title3 "Interval cancer * tumor size";
+	class CA59_cat;
+	var largest_tumor avg_tumor;
+	histogram largest_tumor avg_tumor;
+run;
+
+proc freq data=sister.sisdat_subset_cases;
+	title3 "Interval cancer * metastatic status";
+	tables CA59_cat*FU_BCInvD_DxStageM/ nocum nocol nopercent;
+run;
+
+title "UMN Iron Study - Cases with Tumor Size Information Only (Baseline Characteristics) (n = 2,494)";
+
+proc freq data=sister.sisdat_subset_complete_cases;
+	title3 "Tumor Count and metastatic status";
+	tables FU_BCInvD_MR3 FU_BCInvD_DxStageM / nocum;
+run;
+
+proc univariate data=sister.sisdat_subset_complete_cases;
+	title2 "Baseline Iron Measures";
+	var UMN_iron_baseline_FE 
+		UMN_iron_baseline_FERTN
+		UMN_iron_baseline_FESAT ;
+	histogram UMN_iron_baseline_FE
+		UMN_iron_baseline_FERTN
+		UMN_iron_baseline_FESAT ;
+run;
+
+proc univariate data=sister.sisdat_subset_complete_cases;	
+	title2 "Baseline BMI";
+	var EX_BMI_FINAL;
+	histogram EX_BMI_FINAL;
+run;
+
+proc freq data=sister.sisdat_subset_complete_cases;
+	title2 "Baseline BMI";
+	tables 	EX_BMI_CDC_FINAL / nocum;
+run;
+
+proc univariate data=sister.sisdat_subset_complete_cases;
+	title2 "Additional Baseline Variables";	
+	var AgeExact_Baseline 
+		FU_BCInvD_EOFAgeExact
+		PG_MenarcheAge
+		FU_BCInvNoD_PG_AgeExFirstBirth
+		FU_time
+    largest_tumor avg_tumor;;
+	histogram AgeExact_Baseline 
+		FU_BCInvD_EOFAgeExact 
+		PG_MenarcheAge
+		FU_BCInvNoD_PG_AgeExFirstBirth
+		FU_time;
+run;
+
+proc freq data=sister.sisdat_subset_complete_cases;
+	title2 "Additional Baseline Variables";	
+	tables SM_smokestatusN 
+		SE18 
+		AL_Status  
+		SE_RACE_ETH 
+		firstbirth_cat 
+		age50 
+		dh_vm_yn4_itm16r/ NOCUM;
+run;
+
+proc freq data=sister.sisdat_subset_complete_cases;
+	title2 "Additional Baseline Variables";	
+	tables HR_menopause / NOCUM ;
+run;
+
+proc freq data=sister.sisdat_subset_complete_cases;
+	title2 "Additional Baseline Variables";	
+	where HR_menopause = 1;
+	tables meno_age / NOCUM ;
+run;
+
+
+title;
+ods pdf close;
+ods graphics off;
+		
+```
+
+
+<!-- NOTE: following script from 'Bivariate Stats.sas' file on Rachel's github repo for this project (https://github.com/iron-and-tumorsize-sip2021) -->
+
+# Bivariate Stats.sas
+
+```{r, engine='sas', engine.path=saspath, engine.opts=sasopts, results='markup', echo=TRUE, message=T, warning=FALSE, eval=T}
+
+/* Associations between Serum Iron Levels and Tumor Size 
+	Bivariate Analyses and Data Visualizations
+	Data source: The Sister Study
+	Author: Rachel L. Thompson
+	Date: 08/04/21
+*/
+
+/* Set SAS library and formats */
+libname sister "../Sister Study/data";
+OPTIONS NOFMTERR FMTSEARCH=(sister.sisformats);
+
+
+/* Output PDF file settings*/
+ods pdf file = "Bivariate Stats Output.pdf" gtitle gfootnote style=journal2a;
+ods noproctitle;
+options nodate dlcreatedir leftmargin=.2in rightmargin=.2in topmargin=.2in bottommargin=.2in
+	orientation=portrait center printerpath=pdf;
+ods escapechar="^";
+
+%let maintitle = ^S={font=('Times New Roman', 16pt, bold) just=center};
+%let maintitle2 = ^S={font=('Times New Roman', 16pt) just=center};
+
+
+ods text= "&maintitle ^n^n^nAssociations between Serum Iron and Tumor Size";
+ods text= "&maintitle ^nAnalysis from the Sister Study Cohort";
+ods text= "&maintitle2 ^nBivariate Analyses and Data Visualizations";
+ods text= "&maintitle2 ^n^nLast Revision: August 4th, 2021";
+ods text= "&maintitle2 ^nAuthor: Rachel L. Thompson, M.S., NIEHS 2021 Summer Research Intern";
+
+ods startpage=now;
+
+
+/* Create macro for single scatterplots */
+%macro scatter(xvar, yvar, xvar_name, yvar_name);
+	/* Calculate Spearman s Rank Correlation Coefficient */
+	proc corr data=sister.sisdat_subset_complete_cases noprint outs=corrstat;
+		var &xvar &yvar;
+	run;
+
+	/* Create dataset with only correlation coefficient value
+		to annotate scatterplot */
+	data corrstat;
+		set corrstat ;
+		where _TYPE_ = "CORR";
+		keep &yvar;
+	run;
+
+	data corrstat;
+		set corrstat (obs=1);
+		corr = &yvar;
+		keep corr;
+	run;
+	
+	/* Merge corrstat annotation dataset to full dataset */
+	data plotset;
+		if _N_ = 1 then set corrstat;
+		set sister.sisdat_subset_complete_cases;
+		label corr = "Spearman s Correlation";
+	run;
+
+	/* Create scatterplot and annotate with Spearman correlation label */
+	proc sgpanel data=plotset;
+		panelby corr / noheader;
+		title2 "&xvar_name vs. &yvar_name";
+		scatter x=&xvar y=&yvar;
+		inset corr / textattrs=(Size=10);
+	run;
+%mend;
+
+/* Create macro for paneled scatterplots */
+%macro scatter_panel (xvar, yvar, groupvar, xvar_name, yvar_name, groupvar_name);
+	/* Sort by grouping variable */
+	proc sort data=sister.sisdat_subset_complete_cases out=sorted;
+		by &groupvar;
+	run;
+
+	/* Calculate Spearman s Rank Correlation Coefficient
+		for each group */
+	proc corr data=sorted noprint outs=corrstat;
+		by &groupvar;
+		var &xvar &yvar;
+	run;
+
+	data corrstat;
+		set corrstat;
+		where _TYPE_ = "CORR" AND &yvar < 1;
+		corr = &yvar;
+		keep corr &groupvar; 
+	run;
+
+	/* match-merge stats with original data and relabel */
+	data merged;
+		merge sorted corrstat;
+		by &groupvar;
+		label corr = "Spearman s Correlation";
+
+	proc sgpanel data=merged;
+		title2 "&xvar_name vs. &yvar_name";
+		title3 "Grouped by &groupvar_name";
+		panelby &groupvar;
+		scatter x=&xvar y=&yvar;
+		inset corr / textattrs=(Size=8);
+	run;
+%mend;
+
+/* Create macro for single boxplots and summary stats */
+%macro mets_boxplot(xvar, xvar_name);
+	proc sgplot data=sister.sisdat_subset_complete_cases;
+		where FU_BCInvD_DxStageM ne "";	
+		title2 "Boxplots of &xvar_name vs. Metastatic Status";
+		vbox &xvar / group=FU_BCInvD_DxStageM;
+		discretelegend / title="";
+	run;
+
+	proc means data=sister.sisdat_subset_complete_cases q1 median q3 maxdec=2;
+		class FU_BCInvD_DxStageM;
+		var &xvar;
+	run;
+
+%mend;
+
+/* Create macro for paneled boxplots */
+%macro mets_boxplot_panel(xvar, xvar_name, groupvar, groupvar_name); 
+	proc sgpanel data=sister.sisdat_subset_complete_cases;
+		panelby &groupvar;
+		where FU_BCInvD_DxStageM ne "";
+		title2 "Boxplots of &xvar_name vs. Metastatic Status";
+		title3 "Grouped by &groupvar_name";
+		vbox &xvar / group=FU_BCInvD_DxStageM;
+		discretelegend / title="";
+	run;
+%mend;
+
+title "Scatterplots of Iron Measures vs. Tumor Size Variables";
+
+%scatter(UMN_iron_baseline_fe, log_largest_tumor, Baseline Iron, Natural Log-Transformed Largest Tumor Size);
+%scatter(log_fertn, log_largest_tumor, Baseline log(Ferritin), Natural Log-Transformed Largest Tumor Size);
+%scatter(UMN_iron_baseline_fesat, log_largest_tumor, Baseline Percent Transferrin Saturation, Natural Log-Transformed Largest Tumor Size);
+
+%scatter(UMN_iron_baseline_fe, log_avg_tumor, Baseline Iron, Natural Log-Transformed Average Tumor Size);
+%scatter(log_fertn, log_avg_tumor, Baseline log(Ferritin), Natural Log-Transformed Average Tumor Size);
+%scatter(UMN_iron_baseline_fesat, log_avg_tumor, Baseline Percent Transferrin Saturation, Natural Log-Transformed Average Tumor Size);
+
+%scatter_panel(UMN_iron_baseline_fe, log_largest_tumor, bmicat, 
+	Baseline Iron, Natural Log-Transformed Largest Tumor Size, BMI Category);
+
+%scatter_panel(log_fertn, log_largest_tumor, bmicat, 
+	log(Ferritin), Natural Log-Transformed Largest Tumor Size, BMI Category);
+
+%scatter_panel(UMN_iron_baseline_fesat, log_largest_tumor, bmicat, 
+	Baseline Percent Transferrin Saturation, Natural Log-Transformed Largest Tumor Size, BMI Category);
+
+%scatter_panel(UMN_iron_baseline_fe, log_avg_tumor, bmicat, 
+	Baseline Iron, Natural Log-Transformed Average Tumor Size, BMI Category);
+
+%scatter_panel(log_fertn, log_avg_tumor, bmicat, 
+	log(Ferritin), Natural Log-Transformed Average Tumor Size, BMI Category);
+
+%scatter_panel(UMN_iron_baseline_fesat, log_avg_tumor, bmicat, 
+	Baseline Percent Transferrin Saturation, Natural Log-Transformed Average Tumor Size, BMI Category);
+
+%scatter_panel(UMN_iron_baseline_fe, log_largest_tumor, CA59_cat, 
+	Baseline Iron, Natural Log-Transformed Largest Tumor Size, Mode of Detection);
+
+%scatter_panel(log_fertn, log_largest_tumor, CA59_cat, 
+	log(Ferritin), Natural Log-Transformed Largest Tumor Size, Mode of Detection);
+
+%scatter_panel(UMN_iron_baseline_fesat, log_largest_tumor, CA59_cat, 
+	Baseline Percent Transferrin Saturation, Natural Log-Transformed Largest Tumor Size, Mode of Detection);
+
+%scatter_panel(UMN_iron_baseline_fe, log_avg_tumor, CA59_cat, 
+	Baseline Iron, Natural Log-Transformed Average Tumor Size, Mode of Detection);
+
+%scatter_panel(log_fertn, log_avg_tumor, CA59_cat, 
+	log(Ferritin), Natural Log-Transformed Average Tumor Size, Mode of Detection);
+
+%scatter_panel(UMN_iron_baseline_fesat, log_avg_tumor, CA59_cat, 
+	Baseline Percent Transferrin Saturation, Natural Log-Transformed Average Tumor Size, Mode of Detection);
+
+%scatter_panel(UMN_iron_baseline_fe, log_largest_tumor, age50, 
+	Baseline Iron, Natural Log-Transformed Largest Tumor Size, Age);
+
+%scatter_panel(log_fertn, log_largest_tumor, age50, 
+	log(Ferritin), Natural Log-Transformed Largest Tumor Size, Age);
+
+%scatter_panel(UMN_iron_baseline_fesat, log_largest_tumor, age50, 
+	Baseline Percent Transferrin Saturation, Natural Log-Transformed Largest Tumor Size, Age);
+
+%scatter_panel(UMN_iron_baseline_fe, log_avg_tumor, age50, 
+	Baseline Iron, Natural Log-Transformed Average Tumor Size, Age);
+
+%scatter_panel(log_fertn, log_avg_tumor, age50, 
+	log(Ferritin), Natural Log-Transformed Average Tumor Size, Age);
+
+%scatter_panel(UMN_iron_baseline_fesat, log_avg_tumor, age50, 
+	Baseline Percent Transferrin Saturation, Natural Log-Transformed Average Tumor Size, Mode of Age);
+
+title "Boxplots for Iron Measures vs. Metastatic Status";
+%mets_boxplot(UMN_iron_baseline_fe, Baseline Iron);
+%mets_boxplot(UMN_iron_baseline_fertn, Ferritin);
+%mets_boxplot(UMN_iron_baseline_fesat, Percent Transferrin Saturation);
+
+%mets_boxplot_panel(UMN_iron_baseline_fe, Baseline Iron, bmicat, BMI Category);
+%mets_boxplot_panel(UMN_iron_baseline_fertn, Baseline Ferritin, bmicat, BMI Category);
+%mets_boxplot_panel(UMN_iron_baseline_fesat, Baseline Percent Transferrin Saturation, bmicat, BMI Category);
+
+%mets_boxplot_panel(UMN_iron_baseline_fe, Baseline Iron, CA59_cat, Mode of Detection);
+%mets_boxplot_panel(UMN_iron_baseline_fertn, Baseline Ferritin, CA59_cat, Mode of Detection);
+%mets_boxplot_panel(UMN_iron_baseline_fesat, Baseline Percent Transferrin Saturation, CA59_cat, Mode of Detection);
+
+%mets_boxplot_panel(UMN_iron_baseline_fe, Baseline Iron, age50, Age);
+%mets_boxplot_panel(UMN_iron_baseline_fertn, Baseline Ferritin, age50, Age);
+%mets_boxplot_panel(UMN_iron_baseline_fesat, Baseline Percent Transferrin Saturation, age50, Age);
+
+title;
+ods pdf close;
+
+```
+
+
+
+<!-- NOTE: following script from 'Modeling.sas' file on Rachel's github repo for this project (https://github.com/iron-and-tumorsize-sip2021) -->
+
+# Modeling.sas
+
+```{r, engine='sas', engine.path=saspath, engine.opts=sasopts, results='markup', echo=TRUE, message=T, warning=FALSE, eval=T}
+
+/* Associations between Serum Iron Levels and Tumor Size 
+	Linear/Logistic Regression Modeling
+	Data source: The Sister Study
+	Author: Rachel L. Thompson
+	Date: 08/04/21
+*/
+
+/* Set SAS library and formats */
+libname sister "../Sister Study/data";
+OPTIONS NOFMTERR FMTSEARCH=(sister.sisformats);
+
+
+/* Output PDF file settings*/
+
+ods pdf file = "Modeling.pdf" gtitle gfootnote style=journal2a;
+ods noproctitle;
+options nodate dlcreatedir leftmargin=.2in rightmargin=.2in topmargin=.2in bottommargin=.2in
+	orientation=portrait center printerpath=pdf;
+ods escapechar="^";
+
+%let maintitle = ^S={font=('Times New Roman', 16pt, bold) just=center};
+%let maintitle2 = ^S={font=('Times New Roman', 16pt) just=center};
+
+
+ods text= "&maintitle ^n^n^nAssociations between Serum Iron and Tumor Size";
+ods text= "&maintitle ^nAnalysis from the Sister Study Cohort";
+ods text= "&maintitle2 ^nModeling";
+ods text= "&maintitle2 ^n^nLast Revision: August 4th, 2021";
+ods text= "&maintitle2 ^nAuthor: Rachel L. Thompson, M.S., NIEHS 2021 Summer Research Intern";
+
+ods startpage=now;
+
+ods graphics on;
+
+	  
+/* Run these to enable ODS graphics editor -
+ remember to turn sge off after */
+/*
+ods listing sge=on;
+ods html sge=on;
+*/
+
+	  
+title "Unadjusted Linear Models";
+proc reg data=sister.sisdat_subset_complete_cases;
+	model log_largest_tumor = UMN_iron_baseline_fe / clb;
+	model log_largest_tumor = log_fertn  / clb;
+	model log_largest_tumor = UMN_iron_baseline_fesat / clb;
+	model log_avg_tumor = UMN_iron_baseline_fe / clb;
+	model log_avg_tumor = log_fertn / clb;
+	model log_avg_tumor = UMN_iron_baseline_fesat / clb;
+run;
+
+title "Main Effects Models - Adjusted for Age and BMI";
+
+/* Create macro for main effects (linear) models and scatterplots with overlayed adjusted regression slopes */
+%macro main_model(iron_var, y_var, iron_var_name, y_var_name);
+	ods graphics on;
+
+	/* Fit regression model adjusting for BMI and Age */
+	proc glm data=sister.sisdat_subset_complete_cases;
+		title2 "Linear Regression of &y_var_name on &iron_var_name";
+		title3 "Adjusted for Age and BMI Category";
+		class age50 bmicat;
+		model &y_var = &iron_var age50 bmicat / solution clparm;
+		/* Output predicted values for regression slope visual */
+		output out=preds predicted=predicted;
+		/* Output parameter estimates to inset scatterplot */
+		ods output parameterestimates=PE;
+	run;
+
+	/* Use sas macro language to save regression estimates as macro variables 
+	(these will be inset to final scatterplot/regression slope image)*/
+	data _null_;
+	   	set PE;
+	   	if _n_ = 1 then call symput('Intercept', put(estimate, BEST6.));    
+	   	else if _n_ = 2 then do;
+			call symput('Slope', put(estimate, BEST7.)); 
+			call symput('LowerCL', put(LowerCL, BEST6.));
+			call symput('UpperCL', put(UpperCL, BEST6.));
+		end;
+	run;
+
+	/* Set ODS output to produce narrowed versions of scatterplots for poster */
+/*	ods graphics / width=4in height=6in;*/
+
+	/* Create scatterplot of observations with fitted regression line overlay and
+	inset with regression estimates */
+	proc sgplot data=preds noautolegend; 
+		reg x=&iron_var y=predicted / nomarkers lineattrs=(color=black thickness=3);
+		scatter x=&iron_var  y=&y_var / markerattrs=(color=black) transparency=0.5;
+		inset "Intercept: &Intercept" "Adjusted Slope: &Slope" "95% CI: (&LowerCL, &UpperCL)" / 
+	         border position=topright textattrs=(family="Times New Roman");
+		xaxis label="&iron_var_name";
+		yaxis label="&y_var_name";
+	run; 
+/*	ods graphics off;*/
+%mend;
+
+%main_model(UMN_iron_baseline_fe, log_largest_tumor, Baseline Iron in ug/dL, Natural Log-Transformed Largest Tumor Size);
+%main_model(log_fertn, log_largest_tumor, Natural Log-Transformed Ferritin, Natural Log-Transformed Largest Tumor Size);
+%main_model(UMN_iron_baseline_fesat, log_largest_tumor, Percent Transferrin Saturation, Natural Log-Transformed Largest Tumor Size);
+
+%main_model(UMN_iron_baseline_fe, log_avg_tumor, Baseline Iron in ug/dL, Natural Log-Transformed Average Tumor Size);
+%main_model(log_fertn, log_avg_tumor, Natural Log-Transformed Ferritin, Natural Log-Transformed Average Tumor Size);
+%main_model(UMN_iron_baseline_fesat, log_avg_tumor, Percent Transferrin Saturation, Natural Log-Transformed Average Tumor Size);
+
+
+proc logistic data=sister.sisdat_subset_complete_cases plots=effect;
+	title2 "Binary Logistic Regression of Metastatic Status on Baseline Iron, unadjusted";
+	class  FU_BCInvD_DxStageM / desc;
+	model FU_BCInvD_DxStageM = UMN_iron_baseline_fe  / link=logit;
+run;
+
+proc logistic data=sister.sisdat_subset_complete_cases plots=effect;
+	title2 "Binary Logistic Regression of Metastatic Status on Baseline log(Ferritin), unadjusted";
+	class  FU_BCInvD_DxStageM / desc;
+	model FU_BCInvD_DxStageM = log_fertn / link=logit;
+run;
+
+proc logistic data=sister.sisdat_subset_complete_cases plots=effect;
+	title2 "Binary Logistic Regression of Metastatic Status on Baseline % Transferrin Saturation, unadjusted";
+	class  FU_BCInvD_DxStageM / desc;
+	model FU_BCInvD_DxStageM = UMN_iron_baseline_fesat / link=logit;
+run;
+
+proc logistic data=sister.sisdat_subset_complete_cases plots=effect;
+	title2 "Binary Logistic Regression of Metastatic Status on Baseline Iron, Adjusted for Age and BMI Category";
+	class age50 FU_BCInvD_DxStageM bmicat/ desc;
+	model FU_BCInvD_DxStageM = UMN_iron_baseline_fe age50 bmicat  / link=logit;
+run;
+
+proc logistic data=sister.sisdat_subset_complete_cases plots=effect;
+	title2 "Binary Logistic Regression of Metastatic Status on Baseline log(Ferritin), Adjusted for Age and BMI Category";
+	class age50 FU_BCInvD_DxStageM bmicat / desc;
+	model FU_BCInvD_DxStageM = log_fertn age50 bmicat / link=logit;
+run;
+
+proc logistic data=sister.sisdat_subset_complete_cases plots=effect;
+	title2 "Binary Logistic Regression of Metastatic Status on Baseline % Transferrin Saturation, Adjusted for Age and BMI Category";
+	class age50 FU_BCInvD_DxStageM bmicat/ desc;
+	model FU_BCInvD_DxStageM = UMN_iron_baseline_fesat age50 bmicat / link=logit;
+run;
+
+/*
+title "Full Models (Including Interactions between Iron Measures and Age, BMI Categories)";
+
+proc glm data=sister.sisdat_subset_complete_cases plots=diagnostics;
+	title2 "Linear Regression of log(Largest Tumor Size) on Baseline Iron, Age, and BMI Category";
+	class age50 bmicat;
+	model log_largest_tumor = UMN_iron_baseline_fe age50 bmicat UMN_iron_baseline_fe*age50 UMN_iron_baseline_fe*bmicat / solution;
+run;
+
+proc glm data=sister.sisdat_subset_complete_cases plots=diagnostics;
+	title2 "Linear Regression of log(Largest Tumor Size) on Baseline Ferritin, Age, and BMI Category";
+	class age50 bmicat;
+	model log_largest_tumor = log_fertn age50 bmicat log_fertn*age50 log_fertn*bmicat / solution;
+run;
+
+proc glm data=sister.sisdat_subset_complete_cases plots=diagnostics;
+	title2 "Linear Regression of log(Largest Tumor Size) on Baseline % Transferrin Saturation, Age, and BMI Category";
+	class age50 bmicat;
+	model log_largest_tumor = UMN_iron_baseline_fesat age50 bmicat UMN_iron_baseline_fesat*age50 UMN_iron_baseline_fesat*bmicat / solution;
+run;
+
+proc glm data=sister.sisdat_subset_complete_cases plots=diagnostics;
+	title2 "Linear Regression of log(Average Tumor Size) on Baseline Iron, Age, and BMI Category";
+	class age50 bmicat;
+	model log_avg_tumor = UMN_iron_baseline_fe age50 bmicat UMN_iron_baseline_fe*age50 UMN_iron_baseline_fe*bmicat / solution;
+run;
+
+proc glm data=sister.sisdat_subset_complete_cases plots=diagnostics;
+	title2 "Linear Regression of log(Average Tumor Size) on Baseline log(Ferritin), Age, and BMI Category";
+	class age50 bmicat;
+	model log_avg_tumor = log_fertn age50 bmicat log_fertn*age50 log_fertn*bmicat / solution;
+run;
+
+proc glm data=sister.sisdat_subset_complete_cases plots=diagnostics;
+	title2 "Linear Regression of log(Average Tumor Size) on Baseline % Transferrin Saturation, Age, and BMI Category";
+	class age50 bmicat;
+	model log_avg_tumor = UMN_iron_baseline_fesat age50 bmicat UMN_iron_baseline_fesat*age50 UMN_iron_baseline_fesat*bmicat / solution;
+	output out=preds predicted=predicted;
+run;
+
+proc logistic data=sister.sisdat_subset_complete_cases plots=effect;
+	title2 "Binary Logistic Regression of Metastatic Status on Baseline Iron, Age, and BMI Category";
+	class age50 FU_BCInvD_DxStageM bmicat/ desc;
+	model FU_BCInvD_DxStageM = UMN_iron_baseline_fe age50 bmicat UMN_iron_baseline_fe*age50 UMN_iron_baseline_fe*bmicat / link=logit;
+run;
+
+proc logistic data=sister.sisdat_subset_complete_cases plots=effect;
+	title2 "Binary Logistic Regression of Metastatic Status on Baseline log(Ferritin), Age, and BMI Category";
+	class age50 FU_BCInvD_DxStageM bmicat / desc;
+	model FU_BCInvD_DxStageM = log_fertn age50 bmicat log_fertn*age50 log_fertn*bmicat/ link=logit;
+run;
+
+proc logistic data=sister.sisdat_subset_complete_cases plots=effect;
+	title2 "Binary Logistic Regression of Metastatic Status on Baseline % Transferrin Saturation, Age, and BMI Category";
+	class age50 FU_BCInvD_DxStageM bmicat/ desc;
+	model FU_BCInvD_DxStageM = UMN_iron_baseline_fesat age50 bmicat UMN_iron_baseline_fesat*age50 UMN_iron_baseline_fesat*bmicat/ link=logit;
+run;
+
+title "Full Models (Including Interactions between Iron Measures and Age, BMI Categories), 
+	Excluding Single Large Outlier";
+
+data outlier_removed outlier;
+	set preds;
+	if predicted > 0.8 then output outlier;
+
+	else output outlier_removed;
+run;
+
+proc print data=outlier;
+title2 "Characteristics of Removed Outlier";
+run;
+
+proc glm data=outlier_removed plots=diagnostics;
+	title2 "Linear Regression of log(Largest Tumor Size) on Baseline Iron, Age, and BMI Category";
+	class age50 bmicat;
+	model log_largest_tumor = UMN_iron_baseline_fe age50 bmicat UMN_iron_baseline_fe*age50 UMN_iron_baseline_fe*bmicat / solution;
+run;
+
+proc glm data=outlier_removed plots=diagnostics;
+	title2 "Linear Regression of log(Largest Tumor Size) on Baseline Ferritin, Age, and BMI Category";
+	class age50 bmicat;
+	model log_largest_tumor = log_fertn age50 bmicat log_fertn*age50 log_fertn*bmicat / solution;
+run;
+
+proc glm data=outlier_removed plots=diagnostics;
+	title2 "Linear Regression of log(Largest Tumor Size) on Baseline % Transferrin Saturation, Age, and BMI Category";
+	class age50 bmicat;
+	model log_largest_tumor = UMN_iron_baseline_fesat age50 bmicat UMN_iron_baseline_fesat*age50 UMN_iron_baseline_fesat*bmicat / solution;
+run;
+
+proc glm data=outlier_removed plots=diagnostics;
+	title2 "Linear Regression of log(Average Tumor Size) on Baseline Iron, Age, and BMI Category";
+	class age50 bmicat;
+	model log_avg_tumor = UMN_iron_baseline_fe age50 bmicat UMN_iron_baseline_fe*age50 UMN_iron_baseline_fe*bmicat / solution;
+run;
+
+proc glm data=outlier_removed plots=diagnostics;
+	title2 "Linear Regression of log(Average Tumor Size) on Baseline log(Ferritin), Age, and BMI Category";
+	class age50 bmicat;
+	model log_avg_tumor = log_fertn age50 bmicat log_fertn*age50 log_fertn*bmicat / solution;
+run;
+
+proc glm data=outlier_removed plots=diagnostics;
+	title2 "Linear Regression of log(Average Tumor Size) on Baseline % Transferrin Saturation, Age, and BMI Category";
+	class age50 bmicat;
+	model log_avg_tumor = UMN_iron_baseline_fesat age50 bmicat UMN_iron_baseline_fesat*age50 UMN_iron_baseline_fesat*bmicat / solution;
+	output out=preds predicted=predicted;
+run;
+
+proc logistic data=outlier_removed plots=effect;
+	title2 "Binary Logistic Regression of Metastatic Status on Baseline Iron, Age, and BMI Category";
+	class age50 FU_BCInvD_DxStageM bmicat/ desc;
+	model FU_BCInvD_DxStageM = UMN_iron_baseline_fe age50 bmicat UMN_iron_baseline_fe*age50 UMN_iron_baseline_fe*bmicat / link=logit;
+run;
+
+proc logistic data=outlier_removed plots=effect;
+	title2 "Binary Logistic Regression of Metastatic Status on Baseline log(Ferritin), Age, and BMI Category";
+	class age50 FU_BCInvD_DxStageM bmicat / desc;
+	model FU_BCInvD_DxStageM = log_fertn age50 bmicat log_fertn*age50 log_fertn*bmicat/ link=logit;
+run;
+
+proc logistic data=outlier_removed plots=effect;
+	title2 "Binary Logistic Regression of Metastatic Status on Baseline % Transferrin Saturation, Age, and BMI Category";
+	class age50 FU_BCInvD_DxStageM bmicat/ desc;
+	model FU_BCInvD_DxStageM = UMN_iron_baseline_fesat age50 bmicat UMN_iron_baseline_fesat*age50 UMN_iron_baseline_fesat*bmicat/ link=logit;
+run;
+*/
+title;
+	
+ods pdf close;
+ods graphics off;
+/*
+ods listing sge=off;
+ods html sge=off;
+*/
+	  
+```
+
+
+<!-- NOTE: following script from 'Sens1.sas' file on Rachel's github repo for this project (https://github.com/iron-and-tumorsize-sip2021) -->
+
+# Sens1.sas
+
+```{r, engine='sas', engine.path=saspath, engine.opts=sasopts, results='markup', echo=TRUE, message=T, warning=FALSE, eval=T}
+
+/* Associations between Serum Iron Levels and Tumor Size 
+	Sensitivity Analysis I - Restrict Analysis to More Proximal Iron Measures
+	(Diagnosis up to 4 years after iron measured, excluding first 6 months)
+	Data source: The Sister Study
+	Author: Rachel L. Thompson
+	Date: 08/04/21
+*/
+
+/* Set SAS library and formats */
+libname sister "../Sister Study/data";
+OPTIONS NOFMTERR FMTSEARCH=(sister.sisformats);
+
+
+/* Output PDF file settings*/
+ods pdf file = "Sens1.pdf" gtitle gfootnote style=journal2a;
+ods noproctitle;
+options nodate dlcreatedir leftmargin=.2in rightmargin=.2in topmargin=.2in bottommargin=.2in
+	orientation=portrait center printerpath=pdf;
+ods escapechar="^";
+
+%let maintitle = ^S={font=('Times New Roman', 16pt, bold) just=center};
+%let maintitle2 = ^S={font=('Times New Roman', 16pt) just=center};
+
+
+ods text= "&maintitle ^n^n^nAssociations between Serum Iron and Tumor Size";
+ods text= "&maintitle ^nAnalysis from the Sister Study Cohort";
+ods text= "&maintitle2 ^nSensitivity Analysis - Restrict to Diagnoses Between 6 months and 4 years from Baseline";
+ods text= "&maintitle2 ^n^nLast Revision: August 4th, 2021";
+ods text= "&maintitle2 ^nAuthor: Rachel L. Thompson, M.S., NIEHS 2021 Summer Research Intern";
+
+ods startpage=now;
+ods graphics on;
+
+
+
+/* Restrict to women with diagnoses less than 4 years after baseline iron measure,
+	and exclude women with diagnoses less than 6 months after baseline iron measure */
+data sens1;
+	set sister.sisdat_subset_complete_cases;
+	where fu_time >= 0.5 and fu_time < 4;
+run;
+
+proc univariate data=sens1;
+	title "Distribution of Follow-Up Time, Restricting to Diagnoses >=6 months and <4 Years After Baseline";
+	var fu_time ;
+	histogram fu_time;
+run;
+	
+proc freq data=sens1;
+	tables FU_BCInvD_DxStageM ;
+	run;
+
+proc logistic data=sens1;
+	title "Binary Logistic Regression of Metastatic Status on Baseline transferrin saturation, unadjusted";
+	class  FU_BCInvD_DxStageM / desc;
+	model FU_BCInvD_DxStageM = UMN_iron_baseline_fesat  / link=logit;
+run;
+	
+proc logistic data=sens1;
+	title "Binary Logistic Regression of Metastatic Status on Baseline serum iron, unadjusted";
+	class  FU_BCInvD_DxStageM / desc;
+	model FU_BCInvD_DxStageM = UMN_iron_baseline_fe  / link=logit;
+run;
+	
+proc logistic data=sens1;
+	title "Binary Logistic Regression of Metastatic Status on Baseline serum ferritin, unadjusted";
+	class  FU_BCInvD_DxStageM / desc;
+	model FU_BCInvD_DxStageM = UMN_iron_baseline_fertn  / link=logit;
+run;
+
+	
+/* Create macro for single scatterplots */
+%macro scatter(xvar, yvar, xvar_name, yvar_name);
+	/* Calculate Spearman s Rank Correlation Coefficient */
+	proc corr data=sens1 noprint outs=corrstat;
+		var &xvar &yvar;
+	run;
+
+	/* Create dataset with only correlation coefficient value
+		to annotate scatterplot */
+	data corrstat;
+		set corrstat ;
+		where _TYPE_ = "CORR";
+		keep &yvar;
+	run;
+
+	data corrstat;
+		set corrstat (obs=1);
+		corr = &yvar;
+		keep corr;
+	run;
+	
+	/* Merge corrstat annotation dataset to full dataset */
+	data plotset;
+		if _N_ = 1 then set corrstat;
+		set sens1;
+		label corr = "Spearman s Correlation";
+	run;
+
+	/* Create scatterplot and annotate with Spearman correlation label */
+	proc sgpanel data=plotset;
+		panelby corr / noheader;
+		title2 "&xvar_name vs. &yvar_name";
+		scatter x=&xvar y=&yvar;
+		inset corr / textattrs=(Size=10);
+	run;
+%mend;
+
+title "Scatterplots of Iron Measures vs. Tumor Size Variables";
+
+%scatter(UMN_iron_baseline_fe, log_largest_tumor, Baseline Iron, Natural Log-Transformed Largest Tumor Size);
+%scatter(log_fertn, log_largest_tumor, Baseline log(Ferritin), Natural Log-Transformed Largest Tumor Size);
+%scatter(UMN_iron_baseline_fesat, log_largest_tumor, Baseline Percent Transferrin Saturation, Natural Log-Transformed Largest Tumor Size);
+
+%scatter(UMN_iron_baseline_fe, log_avg_tumor, Baseline Iron, Natural Log-Transformed Average Tumor Size);
+%scatter(log_fertn, log_avg_tumor, Baseline log(Ferritin), Natural Log-Transformed Average Tumor Size);
+%scatter(UMN_iron_baseline_fesat, log_avg_tumor, Baseline Percent Transferrin Saturation, Natural Log-Transformed Average Tumor Size);
+
+title "Unadjusted Linear Models";
+proc reg data=sens1;
+	model log_largest_tumor = UMN_iron_baseline_fe / clb;
+	model log_largest_tumor = log_fertn  / clb;
+	model log_largest_tumor = UMN_iron_baseline_fesat / clb;
+	model log_avg_tumor = UMN_iron_baseline_fe / clb;
+	model log_avg_tumor = log_fertn / clb;
+	model log_avg_tumor = UMN_iron_baseline_fesat / clb;
+run;
+
+/* Create macro for main effects (linear) models and scatterplots with overlayed adjusted regression slopes */
+%macro main_model(iron_var, y_var, iron_var_name, y_var_name);
+	ods graphics on;
+
+	/* Fit regression model adjusting for BMI and Age */
+	proc glm data=sens1 plots=diagnostics;
+		title2 "Linear Regression of &y_var_name on &iron_var_name";
+		title3 "Adjusted for Age and BMI Category";
+		class age50 bmicat;
+		model &y_var = &iron_var age50 bmicat / solution clparm;
+		/* Output predicted values for regression slope visual */
+		output out=preds predicted=predicted;
+		/* Output parameter estimates to inset scatterplot */
+		ods output parameterestimates=PE;
+	run;
+
+	/* Use sas macro language to save regression estimates as macro variables 
+	(these will be inset to final scatterplot/regression slope image)*/
+	data _null_;
+	   	set PE;
+	   	if _n_ = 1 then call symput('Intercept', put(estimate, BEST6.));    
+	   	else if _n_ = 2 then do;
+			call symput('Slope', put(estimate, BEST7.)); 
+			call symput('LowerCL', put(LowerCL, BEST6.));
+			call symput('UpperCL', put(UpperCL, BEST6.));
+		end;
+	run;
+
+	/* Create scatterplot of observations with fitted regression line overlay and
+	inset with regression estimates */
+	proc sgplot data=preds noautolegend; 
+		reg x=&iron_var y=predicted / nomarkers lineattrs=(color=black thickness=3);
+		scatter x=&iron_var  y=&y_var / markerattrs=(color=black) transparency=0.5;
+		inset "Intercept: &Intercept" "Adjusted Slope: &Slope" "95% CI: (&LowerCL, &UpperCL)" / 
+	         border position=topright;
+		xaxis label="&iron_var_name";
+		yaxis label="&y_var_name";
+	run; 
+	ods graphics off;
+%mend;
+
+title "Adjusted Main Effects Models";
+
+%main_model(UMN_iron_baseline_fe, log_largest_tumor, Baseline Iron in ug/dL, Natural Log-Transformed Largest Tumor Size);
+%main_model(log_fertn, log_largest_tumor, Natural Log-Transformed Ferritin, Natural Log-Transformed Largest Tumor Size);
+%main_model(UMN_iron_baseline_fesat, log_largest_tumor, Percent Transferrin Saturation, Natural Log-Transformed Largest Tumor Size);
+
+%main_model(UMN_iron_baseline_fe, log_avg_tumor, Baseline Iron in ug/dL, Natural Log-Transformed Average Tumor Size);
+%main_model(log_fertn, log_avg_tumor, Natural Log-Transformed Ferritin, Natural Log-Transformed Average Tumor Size);
+%main_model(UMN_iron_baseline_fesat, log_avg_tumor, Percent Transferrin Saturation, Natural Log-Transformed Average Tumor Size);
+
+
+/* Create macro for single boxplots and summary stats */
+%macro mets_boxplot(xvar, xvar_name);
+	proc sgplot data=sens1;
+		where FU_BCInvD_DxStageM ne "";	
+		title2 "Boxplots of &xvar_name vs. Metastatic Status";
+		vbox &xvar / group=FU_BCInvD_DxStageM;
+		discretelegend / title="";
+	run;
+
+	proc means data=sens1 q1 median q3 maxdec=2;
+		class FU_BCInvD_DxStageM;
+		var &xvar;
+	run;
+%mend;
+
+title "Distribution of Iron Measures by Metastatic Status";
+
+%mets_boxplot(UMN_iron_baseline_fe, Baseline Iron);
+%mets_boxplot(UMN_iron_baseline_fertn, Ferritin);
+%mets_boxplot(UMN_iron_baseline_fesat, Percent Transferrin Saturation);
+
+/*
+title "Logistic regression";
+
+	proc logistic data=sens1 plots=effect;
+	title2 "Binary Logistic Regression of Metastatic Status on Baseline iron, unadjusted";
+	class  FU_BCInvD_DxStageM / desc;
+	model FU_BCInvD_DxStageM = UMN_iron_baseline_fe  / link=logit;
+run;
+
+	proc logistic data=sens1 plots=effect;
+	title2 "Binary Logistic Regression of Metastatic Status on Baseline ferritin, unadjusted";
+	class  FU_BCInvD_DxStageM / desc;
+	model FU_BCInvD_DxStageM = UMN_iron_baseline_fertn  / link=logit;
+run;
+
+		proc logistic data=sens1 plots=effect;
+	title2 "Binary Logistic Regression of Metastatic Status on Baseline transferrin saturation, unadjusted";
+	class  FU_BCInvD_DxStageM / desc;
+	model FU_BCInvD_DxStageM = UMN_iron_baseline_fesat  / link=logit;
+run;
+*/
+
+ods pdf close;
+ods graphics off;
+title;
+
+```
+
+
+<!-- NOTE: following script from 'Sens2.sas' file on Rachel's github repo for this project (https://github.com/iron-and-tumorsize-sip2021) -->
+
+# Sens2.sas
+
+```{r, engine='sas', engine.path=saspath, engine.opts=sasopts, results='markup', echo=TRUE, message=T, warning=FALSE, eval=T}
+
+/* Associations between Serum Iron Levels and Tumor Size 
+	Sensitivity Analysis II - Analysis by Tumor Subtype
+	Data source: The Sister Study
+	Author: Rachel L. Thompson
+	Date: 08/04/21
+*/
+
+/* Set SAS library and formats */
+libname sister "../Sister Study/data";
+OPTIONS NOFMTERR FMTSEARCH=(sister.sisformats);
+
+
+/* Output PDF file settings*/
+ods pdf file = "Sens2.pdf" gtitle gfootnote style=journal2a;
+ods noproctitle;
+options nodate dlcreatedir leftmargin=.2in rightmargin=.2in topmargin=.2in bottommargin=.2in
+	orientation=portrait center printerpath=pdf;
+ods escapechar="^";
+
+%let maintitle = ^S={font=('Times New Roman', 16pt, bold) just=center};
+%let maintitle2 = ^S={font=('Times New Roman', 16pt) just=center};
+
+
+ods text= "&maintitle ^n^n^nAssociations between Serum Iron and Tumor Size";
+ods text= "&maintitle ^nAnalysis from the Sister Study Cohort";
+ods text= "&maintitle2 ^nSensitivity Analysis - Stratified by Tumor Subtype";
+ods text= "&maintitle2 ^n^nLast Revision: August 4th, 2021";
+ods text= "&maintitle2 ^nAuthor: Rachel L. Thompson, M.S., NIEHS 2021 Summer Research Intern";
+
+ods startpage=now;
+ods graphics on;
+
+/* Create ER/PR/HER2 subtype variable */
+/* ER/PR/HER2 subtype derived from:
+		https://academic.oup.com/jnci/article/103/3/250/2517238
+	Also noted:
+		https://seer.cancer.gov/statfacts/html/breast-subtypes.html */
+data sens2;
+	length subtype $25.;
+	set sister.sisdat_subset_complete_cases;
+	if (FU_BC_DxEr_Result = 1 OR FU_BC_DxPR_Result = 1) AND FU_BCInvD_DxHER2_Result = 2 
+		then subtype = "HR+/HER2-";
+	else if (FU_BC_DxEr_Result = 1 OR FU_BC_DxPR_Result = 1) AND FU_BCInvD_DxHER2_Result = 1
+		then subtype = "HR+/HER2+ or HR-/HER2+";
+	else if (FU_BC_DxEr_Result = 2 AND FU_BC_DxPR_Result = 2) AND FU_BCInvD_DxHER2_Result = 1
+		then subtype = "HR+/HER2+ or HR-/HER2+";
+	else if (FU_BC_DxEr_Result = 2 AND FU_BC_DxPR_Result = 2) AND FU_BCInvD_DxHER2_Result = 2
+		then subtype = "HR-/HER2-";
+run;
+
+title "Tumor subtype frequencies";
+
+proc freq data=sens2;
+	tables subtype / nocum;
+run;
+
+
+/* Create macro for paneled scatterplots */
+%macro scatter_panel (xvar, yvar, groupvar, xvar_name, yvar_name, groupvar_name);
+	/* Sort by grouping variable */
+	proc sort data=sens2 out=sorted;
+		by &groupvar;
+	run;
+
+	/* Calculate Spearman s Rank Correlation Coefficient
+		for each group */
+	proc corr data=sorted noprint outs=corrstat;
+		by &groupvar;
+		var &xvar &yvar;
+	run;
+
+	data corrstat;
+		set corrstat;
+		where _TYPE_ = "CORR" AND &yvar < 1;
+		corr = &yvar;
+		keep corr &groupvar; 
+	run;
+
+	/* match-merge stats with original data and relabel */
+	data merged;
+		merge sorted corrstat;
+		by &groupvar;
+		label corr = "Spearman s Correlation";
+
+	proc sgpanel data=merged;
+		title2 "&xvar_name vs. &yvar_name";
+		title3 "Grouped by &groupvar_name";
+		panelby &groupvar;
+		scatter x=&xvar y=&yvar;
+		inset corr / textattrs=(Size=8);
+	run;
+%mend;
+
+title "Scatter plots of iron measures vs. tumor size variables, stratified by tumor subtype";
+
+%scatter_panel(UMN_iron_baseline_fe, log_largest_tumor, subtype, 
+	Baseline Iron, Natural Log-Transformed Largest Tumor Size, Tumor Subtype);
+
+%scatter_panel(log_fertn, log_largest_tumor, subtype, 
+	log(Ferritin), Natural Log-Transformed Largest Tumor Size, Tumor Subtype);
+
+%scatter_panel(UMN_iron_baseline_fesat, log_largest_tumor, subtype, 
+	Baseline Percent Transferrin Saturation, Natural Log-Transformed Largest Tumor Size, Tumor Subtype);
+
+%scatter_panel(UMN_iron_baseline_fe, log_avg_tumor, subtype, 
+	Baseline Iron, Natural Log-Transformed Average Tumor Size, Tumor Subtype);
+
+%scatter_panel(log_fertn, log_avg_tumor, subtype, 
+	log(Ferritin), Natural Log-Transformed Average Tumor Size, Tumor Subtype);
+
+%scatter_panel(UMN_iron_baseline_fesat, log_avg_tumor, subtype, 
+	Baseline Percent Transferrin Saturation, Natural Log-Transformed Average Tumor Size, Tumor Subtype);
+
+
+title "Unadjusted Linear Models, Stratifying by Tumor Subtype";
+
+proc sort data=sens2;
+	by subtype;
+run;
+
+proc reg data=sens2;
+	by subtype;
+	model log_largest_tumor = UMN_iron_baseline_fe / clb;
+	model log_largest_tumor = log_fertn  / clb;
+	model log_largest_tumor = UMN_iron_baseline_fesat / clb;
+	model log_avg_tumor = UMN_iron_baseline_fe / clb;
+	model log_avg_tumor = log_fertn / clb;
+	model log_avg_tumor = UMN_iron_baseline_fesat / clb;
+run;
+
+title "Main effects models stratifying on cancer subtype";
+/* Create macro for main effects (linear) models and scatterplots with overlayed adjusted regression slopes */
+%macro main_model(iron_var, y_var, iron_var_name, y_var_name);
+	ods graphics on;
+
+	/* Fit regression model adjusting for BMI and Age */
+	/* Stratifying on tumor subtype */
+	proc glm data=sens2 plots=diagnostics;
+		by subtype;
+		title2 "Linear Regression of &y_var_name on &iron_var_name";
+		title3 "Adjusted for Age and BMI Category";
+		class age50 bmicat;
+		model &y_var = &iron_var age50 bmicat / solution clparm;
+	run;
+%mend;
+
+%main_model(UMN_iron_baseline_fe, log_largest_tumor, Baseline Iron in ug/dL, Natural Log-Transformed Largest Tumor Size);
+%main_model(log_fertn, log_largest_tumor, Natural Log-Transformed Ferritin, Natural Log-Transformed Largest Tumor Size);
+%main_model(UMN_iron_baseline_fesat, log_largest_tumor, Percent Transferrin Saturation, Natural Log-Transformed Largest Tumor Size);
+
+%main_model(UMN_iron_baseline_fe, log_avg_tumor, Baseline Iron in ug/dL, Natural Log-Transformed Average Tumor Size);
+%main_model(log_fertn, log_avg_tumor, Natural Log-Transformed Ferritin, Natural Log-Transformed Average Tumor Size);
+%main_model(UMN_iron_baseline_fesat, log_avg_tumor, Percent Transferrin Saturation, Natural Log-Transformed Average Tumor Size);
+
+ods graphics off;
+ods pdf close;
+title;
+
+```
+
+
+
+<!-- NOTE: following script from 'Sens3.sas' file on Rachel's github repo for this project (https://github.com/iron-and-tumorsize-sip2021) -->
+
+# Sens3.sas
+
+```{r, engine='sas', engine.path=saspath, engine.opts=sasopts, results='markup', echo=TRUE, message=T, warning=FALSE, eval=T}
+
+/* Associations between Serum Iron Levels and Tumor Size 
+	Sensitivity Analysis III - Association between extreme ferritin &
+	% Transferrin Saturation levels and tumor size
+	Data source: The Sister Study
+	Author: Rachel L. Thompson
+	Date: 08/04/21
+*/
+
+/* Set SAS library and formats */
+libname sister "../Sister Study/data";
+OPTIONS NOFMTERR FMTSEARCH=(sister.sisformats);
+
+ods graphics on;
+
+
+/* Output PDF file settings*/
+ods pdf file = "Sens3.pdf" gtitle gfootnote style=journal2a;
+ods noproctitle;
+options nodate dlcreatedir leftmargin=.2in rightmargin=.2in topmargin=.2in bottommargin=.2in
+	orientation=portrait center printerpath=pdf;
+ods escapechar="^";
+
+%let maintitle = ^S={font=('Times New Roman', 16pt, bold) just=center};
+%let maintitle2 = ^S={font=('Times New Roman', 16pt) just=center};
+
+
+ods text= "&maintitle ^n^n^nAssociations between Serum Iron and Tumor Size";
+ods text= "&maintitle ^nAnalysis from the Sister Study Cohort";
+ods text= "&maintitle2 ^nSensitivity Analysis - Associations between Extreme Ferritin and % Transferrin Saturation 
+Levels and Tumor Size ";
+ods text= "&maintitle2 ^n^nLast Revision: August 4th, 2021";
+ods text= "&maintitle2 ^nAuthor: Rachel L. Thompson, M.S., NIEHS 2021 Summer Research Intern";
+
+ods startpage=now;
+ods graphics on;
+
+/* Compare largest tumor size between each values above/below each specified cutpoint */
+
+title "Comparison of Median (IQR) for Largest Tumor Size Above vs. Below Specified Cutpoint";
+
+/* Create macro for high extremes (>=) */
+%macro cutpoint_high (xvar, cutpoint, xvar_name);
+	/* create temporary variable and dataset from specified cutpoints */
+	data cutp;
+		set sister.sisdat_subset_complete_cases;
+		if &xvar >= &cutpoint then cutvar = "&xvar_name >= &cutpoint";
+		else if &xvar < &cutpoint then cutvar = "&xvar_name < &cutpoint";
+	run;
+
+	/* Produce summary statistics by menopausal status at baseline */
+	proc means data=cutp maxdec=2 median q1 q3;
+		title2 "&xvar_name Cutpoint >= &cutpoint, Grouped by Menopause Status at Baseline";
+		class HR_Menopause cutvar;
+		var largest_tumor;
+	run;
+%mend;
+
+/* Create macro for low extremes (<=) */
+%macro cutpoint_low (xvar, cutpoint, xvar_name);
+	/* create temporary variable and dataset from specified cutpoints */
+	data cutp;
+		set sister.sisdat_subset_complete_cases;
+		if &xvar <= &cutpoint then cutvar = "&xvar_name <= &cutpoint";
+		else if &xvar > &cutpoint then cutvar = "&xvar_name > &cutpoint";
+	run;
+
+	/* Produce summary statistics by menopausal status at baseline */
+	proc means data=cutp maxdec=2 median q1 q3;
+		title2 "&xvar_name Cutpoint <= &cutpoint, Grouped by Menopause Status at Baseline";
+		class HR_Menopause cutvar;
+		var largest_tumor;
+	run;
+%mend;
+
+
+/* High levels of ferritin are defined as >= 200 mcg/L and >= 300 mcg/L for 
+premenopausal and postmenopausal females, respectively 
+	Source: https://www.bmj.com/content/351/bmj.h3692.long
+*/
+%cutpoint_high(UMN_iron_baseline_fertn, 300, Ferritin);
+%cutpoint_high(UMN_iron_baseline_fertn, 200, Ferritin);
+
+/* Iron deficiency identified as < 30 mcg/dL ferritin, although WHO definitions have threshold at < 15 
+	and values can range from 12 to 100 mcg/dL 
+	Sources: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5986027/
+		https://academic.oup.com/ajcn/article/102/6/1585/4555166
+*/
+%cutpoint_low(UMN_iron_baseline_fertn, 12, Ferritin);
+%cutpoint_low(UMN_iron_baseline_fertn, 25, Ferritin);
+%cutpoint_low(UMN_iron_baseline_fertn, 45, Ferritin);
+
+
+/* High transferrin saturation levels are considered to be > 45%, > 50%, > 55%, and > 60%. 
+	All of these cutoff values had previously been proposed or used in population-based studies of 
+	elevated serum transferrin saturation 
+	Source: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC1466640/
+*/
+%cutpoint_high(UMN_iron_baseline_fesat, 45, Percent Transferrin Saturation);
+%cutpoint_high(UMN_iron_baseline_fesat, 50, Percent Transferrin Saturation);
+%cutpoint_high(UMN_iron_baseline_fesat, 55, Percent Transferrin Saturation);
+%cutpoint_high(UMN_iron_baseline_fesat, 60, Percent Transferrin Saturation);
+
+/* Low transferrin saturation levels can be as low as 15% and up to 25% thresholds
+	Source: https://academic.oup.com/ajcn/article/102/6/1585/4555166*/
+%cutpoint_low(UMN_iron_baseline_fesat, 20, Percent Transferrin Saturation);
+
+ods graphics off;
+ods pdf close;
+title; 
+	
+```
+
+
+
+
+<!-- NOTE: following script from 'Sens4.sas' file on Rachel's github repo for this project (https://github.com/iron-and-tumorsize-sip2021) -->
+
+# Sens4.sas
+
+```{r, engine='sas', engine.path=saspath, engine.opts=sasopts, results='markup', echo=TRUE, message=T, warning=FALSE, eval=T}
+
+/* Associations between Serum Iron Levels and Tumor Size 
+	Sensitivity Analysis IV - Exclude Women who Took Iron Supplements 4+ days/wk
+	Data source: The Sister Study
+	Author: Rachel L. Thompson
+	Date: 08/04/21
+*/
+
+/* Set SAS library and formats */
+libname sister "../Sister Study/data";
+OPTIONS NOFMTERR FMTSEARCH=(sister.sisformats);
+
+
+/* Output PDF file settings*/
+ods pdf file = "Sens4.pdf" gtitle gfootnote style=journal2a;
+ods noproctitle;
+options nodate dlcreatedir leftmargin=.2in rightmargin=.2in topmargin=.2in bottommargin=.2in
+	orientation=portrait center printerpath=pdf;
+ods escapechar="^";
+
+%let maintitle = ^S={font=('Times New Roman', 16pt, bold) just=center};
+%let maintitle2 = ^S={font=('Times New Roman', 16pt) just=center};
+
+
+ods text= "&maintitle ^n^n^nAssociations between Serum Iron and Tumor Size";
+ods text= "&maintitle ^nAnalysis from the Sister Study Cohort";
+ods text= "&maintitle2 ^nSensitivity Analysis - Exclude Women Who Took Iron Supplements 4+ Days/Wk";
+ods text= "&maintitle2 ^n^nLast Revision: August 4th, 2021";
+ods text= "&maintitle2 ^nAuthor: Rachel L. Thompson, M.S., NIEHS 2021 Summer Research Intern";
+
+ods startpage=now;
+ods graphics on;
+
+/* Exclude women who took iron supplements 4+ days/wk, and women whose iron supplementations
+	status is unknown or ambiguous */
+/* This is accomplished by restricting analytic sample to only those who recorded taking iron 
+	supplements less than 4 days/week (coded as value 0 in variable dh_vm_yn4_itm16r (n = 2,271)*/
+	                                     
+data sens4;
+	set sister.sisdat_subset_complete_cases;
+	where dh_vm_yn4_itm16r = 0;
+run;
+
+proc logistic data=sens4;
+	title "Binary Logistic Regression of Metastatic Status on Baseline transferrin saturation, unadjusted";
+	class  FU_BCInvD_DxStageM / desc;
+	model FU_BCInvD_DxStageM = UMN_iron_baseline_fesat  / link=logit;
+run;
+	
+proc logistic data=sens4;
+	title "Binary Logistic Regression of Metastatic Status on Baseline serum iron, unadjusted";
+	class  FU_BCInvD_DxStageM / desc;
+	model FU_BCInvD_DxStageM = UMN_iron_baseline_fe  / link=logit;
+run;
+	
+proc logistic data=sens4;
+	title "Binary Logistic Regression of Metastatic Status on Baseline serum ferritin, unadjusted";
+	class  FU_BCInvD_DxStageM / desc;
+	model FU_BCInvD_DxStageM = UMN_iron_baseline_fertn  / link=logit;
+run;
+
+	
+
+/* Create macro for single scatterplots */
+%macro scatter(xvar, yvar, xvar_name, yvar_name);
+	/* Calculate Spearman s Rank Correlation Coefficient */
+	proc corr data=sens4 noprint outs=corrstat;
+		var &xvar &yvar;
+	run;
+
+	/* Create dataset with only correlation coefficient value
+		to annotate scatterplot */
+	data corrstat;
+		set corrstat ;
+		where _TYPE_ = "CORR";
+		keep &yvar;
+	run;
+
+	data corrstat;
+		set corrstat (obs=1);
+		corr = &yvar;
+		keep corr;
+	run;
+	
+	/* Merge corrstat annotation dataset to full dataset */
+	data plotset;
+		if _N_ = 1 then set corrstat;
+		set sens4;
+		label corr = "Spearman s Correlation";
+	run;
+
+	/* Create scatterplot and annotate with Spearman correlation label */
+	proc sgpanel data=plotset;
+		panelby corr / noheader;
+		title2 "&xvar_name vs. &yvar_name";
+		scatter x=&xvar y=&yvar;
+		inset corr / textattrs=(Size=10);
+	run;
+%mend;
+
+title "Scatterplots of Iron Measures vs. Tumor Size Variables";
+
+%scatter(UMN_iron_baseline_fe, log_largest_tumor, Baseline Iron, Natural Log-Transformed Largest Tumor Size);
+%scatter(log_fertn, log_largest_tumor, Baseline log(Ferritin), Natural Log-Transformed Largest Tumor Size);
+%scatter(UMN_iron_baseline_fesat, log_largest_tumor, Baseline Percent Transferrin Saturation, Natural Log-Transformed Largest Tumor Size);
+
+%scatter(UMN_iron_baseline_fe, log_avg_tumor, Baseline Iron, Natural Log-Transformed Average Tumor Size);
+%scatter(log_fertn, log_avg_tumor, Baseline log(Ferritin), Natural Log-Transformed Average Tumor Size);
+%scatter(UMN_iron_baseline_fesat, log_avg_tumor, Baseline Percent Transferrin Saturation, Natural Log-Transformed Average Tumor Size);
+
+title "Unadjusted Linear Models";
+proc reg data=sens4;
+	model log_largest_tumor = UMN_iron_baseline_fe / clb;
+	model log_largest_tumor = log_fertn  / clb;
+	model log_largest_tumor = UMN_iron_baseline_fesat / clb;
+	model log_avg_tumor = UMN_iron_baseline_fe / clb;
+	model log_avg_tumor = log_fertn / clb;
+	model log_avg_tumor = UMN_iron_baseline_fesat / clb;
+run;
+
+/* Create macro for main effects (linear) models and scatterplots with overlayed adjusted regression slopes */
+%macro main_model(iron_var, y_var, iron_var_name, y_var_name);
+	ods graphics on;
+
+	/* Fit regression model adjusting for BMI and Age */
+	proc glm data=sens4 plots=diagnostics;
+		title2 "Linear Regression of &y_var_name on &iron_var_name";
+		title3 "Adjusted for Age and BMI Category";
+		class age50 bmicat;
+		model &y_var = &iron_var age50 bmicat / solution clparm;
+		/* Output predicted values for regression slope visual */
+		output out=preds predicted=predicted;
+		/* Output parameter estimates to inset scatterplot */
+		ods output parameterestimates=PE;
+	run;
+
+	/* Use sas macro language to save regression estimates as macro variables 
+	(these will be inset to final scatterplot/regression slope image)*/
+	data _null_;
+	   	set PE;
+	   	if _n_ = 1 then call symput('Intercept', put(estimate, BEST6.));    
+	   	else if _n_ = 2 then do;
+			call symput('Slope', put(estimate, BEST7.)); 
+			call symput('LowerCL', put(LowerCL, BEST6.));
+			call symput('UpperCL', put(UpperCL, BEST6.));
+		end;
+	run;
+
+	/* Create scatterplot of observations with fitted regression line overlay and
+	inset with regression estimates */
+	proc sgplot data=preds noautolegend; 
+		reg x=&iron_var y=predicted / nomarkers lineattrs=(color=black thickness=3);
+		scatter x=&iron_var  y=&y_var / markerattrs=(color=black) transparency=0.5;
+		inset "Intercept: &Intercept" "Adjusted Slope: &Slope" "95% CI: (&LowerCL, &UpperCL)" / 
+	         border position=topright;
+		xaxis label="&iron_var_name";
+		yaxis label="&y_var_name";
+	run; 
+	ods graphics off;
+%mend;
+
+title "Adjusted Main Effects Models";
+
+%main_model(UMN_iron_baseline_fe, log_largest_tumor, Baseline Iron in ug/dL, Natural Log-Transformed Largest Tumor Size);
+%main_model(log_fertn, log_largest_tumor, Natural Log-Transformed Ferritin, Natural Log-Transformed Largest Tumor Size);
+%main_model(UMN_iron_baseline_fesat, log_largest_tumor, Percent Transferrin Saturation, Natural Log-Transformed Largest Tumor Size);
+
+%main_model(UMN_iron_baseline_fe, log_avg_tumor, Baseline Iron in ug/dL, Natural Log-Transformed Average Tumor Size);
+%main_model(log_fertn, log_avg_tumor, Natural Log-Transformed Ferritin, Natural Log-Transformed Average Tumor Size);
+%main_model(UMN_iron_baseline_fesat, log_avg_tumor, Percent Transferrin Saturation, Natural Log-Transformed Average Tumor Size);
+
+
+/* Create macro for single boxplots and summary stats */
+%macro mets_boxplot(xvar, xvar_name);
+	proc sgplot data=sens4;
+		where FU_BCInvD_DxStageM ne "";	
+		title2 "Boxplots of &xvar_name vs. Metastatic Status";
+		vbox &xvar / group=FU_BCInvD_DxStageM;
+		discretelegend / title="";
+	run;
+
+	proc means data=sens4 q1 median q3 maxdec=2;
+		class FU_BCInvD_DxStageM;
+		var &xvar;
+	run;
+%mend;
+
+title "Distribution of Iron Measures by Metastatic Status";
+
+%mets_boxplot(UMN_iron_baseline_fe, Baseline Iron);
+%mets_boxplot(UMN_iron_baseline_fertn, Ferritin);
+%mets_boxplot(UMN_iron_baseline_fesat, Percent Transferrin Saturation);
+
+ods pdf close;
+ods graphics off;
+title;
+
+```

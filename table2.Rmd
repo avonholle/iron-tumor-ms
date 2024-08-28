@@ -1,0 +1,523 @@
+---
+title: 'Table 2: Regression models'
+author: "Ann Von Holle"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+    number_sections: true
+    toc: yes
+    toc_depth: '4'
+  pdf_document:
+    number_sections: true
+    toc: yes
+    toc_depth: '4'
+geometry: margin=1.5cm
+urlcolor: blue
+linkcolor: magenta
+citecolor: red
+editor_options:
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, 
+                      fig.pos = 'H',
+                      warnings=F,
+                      messages=F,
+                      results = "hide",
+                      fig.keep = "none")
+```
+
+
+
+```{r, include=F}
+# bring in packages 
+require(knitr)
+require(haven)
+require(data.table)
+require(ggplot2)
+require(kableExtra)
+require(labelled)
+library(tidyr)
+library(grid)
+require(boot)
+require(tableone)
+library(tidyverse)
+require(gridExtra)
+require(cowplot)
+library(descr)
+library(readxl)
+library(plyr)
+require(dplyr)
+require(olsrr)
+require(splines)
+require(gtsummary)
+
+require(ggh4x)
+
+```
+
+```{r}
+
+load(file="sampledat.RData") # t.dat0 from table1.Rmd
+
+names(t.dat0)
+# bmi: EX_BMI_final
+# meno: HR_Menopause
+
+```
+
+
+```{r}
+
+# Function to do:
+# 1) regression for each iron exposure and tumor size outcome
+
+# NOTE: these values do no directly correspond to the SAS estimates because SAS uses complete case for all the iron exposures, even if the iron exposure in the specified model are not missing. If you look at the SAS proc reg code, all models are specified in one statement so assuming it evaluates all exposures and takes out missing for any of them. I want to include all non-missing for whatever exposure. Note that it makes no difference in the estimates.
+
+#get.stats = function(outcome, exposure){
+get.stats = function(exposure, stdexp=0){
+  # outcome = "largest.tumor"; exposure = "UMN_Iron_Baseline_FERTN"  # debug
+  
+  # make data ================================================
+  # ========================================================
+  # column with metal variable name
+  dat = data.frame(t.dat0[which(t.dat0$tumor.dat==1),]) # select people with tumor size info
+  
+  colnum.outcome1 = "largest.tumor"
+  dat$outcome1 = log(as.numeric(dat[, colnum.outcome1]))
+  
+  colnum.outcome2 = "metastat"
+  dat$outcome2 = dat[, colnum.outcome2]
+
+  colnum.exposure = which(names(dat) %in% exposure)
+#  if(exposure=="UMN_Iron_Baseline_FERTN"){
+#    dat$exposure = log(as.numeric(dat[, colnum.exposure]))
+#  }else{
+#    dat$exposure = as.numeric(dat[, colnum.exposure])/5 # use 5-unit increase
+#    }
+
+    if(stdexp==1){
+      dat$exposure = scale(as.numeric(dat[, colnum.exposure])) # use standardized exposure
+    } else {
+      dat$exposure = as.numeric(dat[, colnum.exposure])/5 # use 5-unit increase
+    }
+      
+  # run regression
+  # ========================================================
+  lm1 = lm(outcome1 ~ exposure, data=dat)
+  
+  # extract out coefficient for association between exposure and outcome
+  estimate = coef(summary(lm1))[2,1]; estimate
+  se = coef(summary(lm1))[2,2]; se
+  
+  # run regression with confounders
+  # ========================================================
+  
+  lm2 = lm(outcome1 ~ exposure + age50 + bmicat , data=dat)
+  
+  # extract out coefficient for association between exposure and outcome
+  estimate.adj = coef(summary(lm2))[2,1]; estimate.adj
+  se.adj = coef(summary(lm2))[2,2]; se.adj
+  
+  # run unadjusted logistic regression
+  # ========================================================
+  
+  lm3 = glm(outcome2 ~ exposure ,
+            data=dat,
+            family=binomial)
+  
+  # extract out coefficient for association between exposure and outcome
+  estimate2 = coef(summary(lm3))[2,1]; estimate2
+  se2 = coef(summary(lm3))[2,2]; se2
+  
+
+  # run adjusted logistic regression
+  # ========================================================
+  
+  lm4 = glm(outcome2 ~ exposure + age50 + bmicat, 
+            data=dat,
+            family=binomial)
+  
+  # extract out coefficient for association between exposure and outcome
+  estimate2.adj = coef(summary(lm4))[2,1]; estimate2.adj
+  se2.adj = coef(summary(lm4))[2,2]; se2.adj
+  
+  # Spearman's correlation 
+  # ========================================================
+
+  corr = with(dat, cor(outcome1, exposure, method = "spearman", 
+                use="complete.obs"))
+  
+  # make data frame with regression coefficients
+  dat1 = data.frame(est = estimate, 
+                    se = se,
+                    est.adj = estimate.adj,
+                    se.adj = se.adj,
+                    est2 = estimate2, 
+                    se2 = se2,
+                    est2.adj = estimate2.adj,
+                    se2.adj = se2.adj,
+                    corr = corr,
+                    exposure = exposure)
+  
+
+  # return data 
+  return(list(dat1, # 1. return data frame with adj and unadjusted estimate with 95% ci
+         ols_plot_resid_qq(lm1), # 2. qqplot
+         ols_plot_resid_stud(lm1), # 3. studentized resids
+         ols_plot_resid_hist(lm1), # 4. resids hist
+         lm1, # 5. unadjusted linear regression model
+         lm2)) # 6. adjusted linear regression model
+}
+
+
+```
+
+
+```{r}
+
+# Run function over all outcomes and exposures
+#outcome.list = c("largest.tumor")
+
+exposure.list = c('UMN_Iron_Baseline_FE',
+                  'UMN_Iron_Baseline_FERTN',
+                  'UMN_Iron_Baseline_FESAT')
+
+# get all combos of outcomes and exposures
+#combo = data.frame(expand.grid(o = outcome.list, e = exposure.list))
+
+run.models = mapply(get.stats,
+#                    outcome = as.character(combo$o),
+#                    exposure = as.character(combo$e),
+                    exposure = exposure.list,
+                    stdexp = 1, # stdexp=1 will standardize exposure with mean=0, sd=1
+                    USE.NAMES = T,
+                    SIMPLIFY=F)
+
+run.models[3] # check
+
+```
+
+
+
+```{r}
+# function to extract out parts of list from function run over metals
+
+# source: https://stackoverflow.com/questions/43014782/how-to-get-the-nth-element-of-each-item-of-a-list-which-is-itself-a-vector-of-u
+
+fun1 <- function(lst, n){
+         sapply(lst, `[`, n)
+}
+
+```
+
+```{r}
+
+# consolidate all rows into one data frame (from first element in list, the regression coefficients)
+coefs.dat = data.frame(fun1(run.models,1) %>% bind_rows()) 
+coefs.dat
+
+# make character with estimate and 95% ci for unadj and adj estimates
+
+coefs.dat = within(coefs.dat, {
+  
+  corr = round(corr, 3)
+
+  est.ci = paste0(format(round(est,3), nsmall=3),
+                  " (",
+                  format(round(est-1.96*se, 3), nsmall=3),
+                  ", ",
+                  format(round(est+1.96*se, 3), nsmall=3),
+                  ")")
+  
+  est.adj.ci = paste0(format(round(est.adj,3), nsmall=3),
+                  " (",
+                  format(round(est.adj - 1.96*se.adj, 3), nsmall=3),
+                  ", ",
+                  format(round(est.adj + 1.96*se.adj, 3), nsmall=3),
+                  ")")
+  
+  est2.ci = paste0(format(round(exp(est2),3), nsmall=3),
+                  " (",
+                  format(round(exp(est2-1.96*se2), 3), nsmall=3),
+                  ", ",
+                  format(round(exp(est2+1.96*se2), 3), nsmall=3),
+                  ")")
+  
+  est2.adj.ci = paste0(format(round(exp(est2.adj),3), nsmall=3),
+                  " (",
+                  format(round(exp(est2.adj - 1.96*se2.adj), 3), nsmall=3),
+                  ", ",
+                  format(round(exp(est2.adj + 1.96*se2.adj), 3), nsmall=3),
+                  ")")
+
+  })
+
+coefs.dat
+
+```
+
+
+```{r}
+
+# make figure for 2023-04 AACR poster
+
+# make data wide to long to fit in adj and unadj results
+
+names(coefs.dat)
+
+# coefs ========================================
+
+coefs.dat.est = coefs.dat %>%
+  select(a1u=est, a1a=est.adj, a2u=est2, a2a=est2.adj, exposure) %>% # select and rename vars to be consistent
+  gather(key = "type", value = "est_values", a1u, a1a, a2u, a2a)
+
+head(coefs.dat.est)
+
+# se ======================================
+
+coefs.dat.se = coefs.dat %>%
+  select(a1u=se, a1a=se.adj, a2u=se2, a2a=se2.adj, exposure) %>% # select and rename vars to be consistent
+  gather(key = "type", value = "se_values", a1u, a1a, a2u, a2a)
+head(coefs.dat.se)
+
+# merge est and se data together
+coefs.dat2 = merge(coefs.dat.est, 
+                   coefs.dat.se,
+                   by=c("exposure", "type"))
+coefs.dat2
+levels(factor(coefs.dat2$type))
+levels(factor(coefs.dat2$exposure))
+
+
+coefs.dat2 = coefs.dat2 %>%
+  mutate(model = factor(type, labels = c("Tumor size (cm)",
+                                         "Tumor size (cm)",
+                                         "OR of metastatic\n breast cancer",
+                                         "OR of metastatic\n breast cancer"))) %>%
+  mutate(adj = factor(type, labels = c("Adjusted",
+                                       "Unadjusted",
+                                       "Adjusted",
+                                       "Unadjusted"))) %>%
+  mutate(exposure = factor(exposure, 
+                           labels = c("Iron (mcg/dL)",
+                                      "Ferritin (mcg/dL)",
+                                      "Transferrin \nSaturation (%) "))) %>%
+  select(-type)
+
+
+
+coefs.dat2
+
+# make or instead of log(or)
+coefs.dat2 = within(coefs.dat2, {
+  est_values2 = ifelse(model=='OR of metastatic\n breast cancer', 
+                       exp(est_values),
+                       est_values)
+  ymin = est_values - 1.96*se_values
+  ymax = est_values + 1.96*se_values
+  ymin2 = ifelse(model=='OR of metastatic\n breast cancer', 
+                 exp(est_values - 1.96*se_values),
+                 est_values - 1.96*se_values)
+  ymax2 = ifelse(model=='OR of metastatic\n breast cancer', 
+                 exp(est_values + 1.96*se_values),
+                 est_values + 1.96*se_values)
+  
+})
+
+save(coefs.dat2, file="t2dat.RData")
+```
+
+```{r}
+
+# make plot of data ============================
+
+# color blind friendly plot colors
+# source: http://www.cookbook-r.com/Graphs/Colors_(ggplot2)/#a-colorblind-friendly-palette
+
+# The palette with black:
+cbbPalette <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+pd1 <- position_dodge(0.75)
+
+levels(coefs.dat2$model)
+# get superscript in facet labels. see https://stackoverflow.com/questions/54677633/how-to-add-superscripts-to-facet-labels
+# and https://stackoverflow.com/questions/66162335/combining-new-lines-and-plotmath-in-facet-labels-with-ggplot2
+
+
+# change to log scale for OR: see https://stackoverflow.com/questions/72962172/custom-y-axis-breaks-of-facet-wrap/73006975#73006975
+
+coefs.dat2$model2 = factor(coefs.dat2$model,
+                           labels = c("atop('Tumor size (cm)'^b)",
+                                      "atop('OR of metastatic','breast cancer')"))
+
+dummy2 <- data.frame(model2 = c("atop('OR of metastatic','breast cancer')",
+                                "atop('Tumor size (cm)'^b)"),
+                     adj = c("Adjusted"),
+                     Z = c(1, 0))
+coefs.dat2$model2
+```
+
+```{r, eval=F, include=F}
+# original figure without log scale for OR
+p2 = ggplot(coefs.dat2, aes(x=exposure, 
+                      y=est_values2, 
+                      group=adj, 
+                      colour=adj)) + 
+  facet_grid(.~factor(model2, levels = c("atop('Tumor size (cm)'^b)",
+                                         "atop('OR of metastatic','breast cancer')"
+                                         )),
+             scales = "free", labeller = label_parsed) +
+  geom_point(position=pd1, size=4, na.rm=T) +
+  geom_errorbar(aes(ymin = ymin2,
+                    ymax = ymax2),
+                width=0.25,
+                position=pd1,
+                size=1) + 
+  xlab("") + 
+  ylab("Coefficient Estimate") +
+  theme_bw(base_size=15) +
+  geom_hline(data=dummy2, 
+             aes(yintercept=Z), lty=3) +
+  theme(#plot.title = element_text(size = 17),
+        legend.position="bottom",
+        axis.text.y = element_text(angle = 45, hjust = 1),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.margin=margin(t=-15)) +
+  coord_flip() + 
+  # To use for line and point colors, add
+  scale_colour_manual(values=cbbPalette) +
+  guides(colour=guide_legend(title="Adjustment")) 
+
+p2
+
+```
+
+
+```{r}
+# updated figure with log scale for figures
+# Note the order of panels is reversed. Can't figure out how to change that with diff scales
+p2 = ggplot(coefs.dat2, aes(x=exposure, 
+                      y=est_values2, 
+                      group=adj, 
+                      colour=adj)) + 
+  facet_grid2(.~ model2,
+              labeller =label_parsed,
+              scales = "free") +
+  geom_point(position=pd1, size=4, na.rm=T) +
+  geom_errorbar(aes(ymin = ymin2,
+                    ymax = ymax2),
+                width=0.25,
+                position=pd1,
+                size=1) + 
+  xlab("") + 
+  ylab("Coefficient Estimate") +
+  theme_bw(base_size=15) +
+  geom_hline(data=dummy2, 
+             aes(yintercept=Z), lty=3) +
+  theme(#plot.title = element_text(size = 17),
+        legend.position="bottom",
+        axis.text.y = element_text(angle = 45, hjust = 1),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        legend.margin=margin(t=-15)) +
+  coord_flip() + 
+  # To use for line and point colors, add
+  scale_colour_manual(values=cbbPalette) +
+  guides(colour=guide_legend(title="Adjustment"))  +
+  facetted_pos_scales(y=list(
+    model2 == "atop('Tumor size (cm)'^b)" ~ scale_y_continuous(),
+    model2 == "atop('OR of metastatic','breast cancer')"  ~ scale_y_log10()))
+p2
+
+
+```
+
+
+```{r}
+
+ggsave(filename = "fig1-poster.png",
+       dpi=300,
+       width=6, height=2.5, units="in")
+
+```
+
+# Table of regression coefficients
+
+```{r, results='markup'}
+
+levels(factor(coefs.dat$exposure))
+
+coefs.dat = within(coefs.dat, {
+  exposure.f = factor(exposure,
+                      labels = c("Iron (mcg/dL)",
+                                 "Ferritin (mcg/dL)",
+                                 "Transferrin saturation (\\%)"))
+})
+
+kable(coefs.dat[c("exposure.f", "corr", "est.ci", "est.adj.ci", "est2.ci", "est2.adj.ci")],
+      col.names = c("Exposure$^b$", 
+                    "Spearman's Rank Correlation",
+                    "Unadjusted $\\beta$",
+                    "Adjusted $\\beta^c$",
+                    "Odds ratio (95\\% CI)",
+                    "Odds Ratio (95\\% CI)$^c$")) %>%
+  kable_styling(position = "left") %>%  
+  column_spec(1, width = "10em") %>%
+  column_spec(2:6, width = "15em") %>%
+  add_header_above(c(" " = 2,
+                     "Largest tumor size$^a$" = 2, 
+                     "Metastatic status" = 2)) %>%
+  add_footnote(c("Natural log-transformed",
+                 "Standardized with mean = 0 and standard deviation = 1",
+                 "Adjusted for age (>50 years, yes/no) and BMI at baseline"),
+               notation="alphabet")
+#  collapse_rows(columns = 1, valign = "top") %>%
+
+```
+
+
+```{r}
+save(coefs.dat, file="t2.RData")
+
+```
+
+# QQ plots
+
+```{r, fig.keep="all", results='markup'}
+
+# get second element in each of the lists from run.models object above (qqplot)
+list.qq = fun1(run.models,2)
+
+# names.list = paste0("outcome = ", combo$o, 
+#                     ". exposure = ", combo$e)
+
+# add identifier before each qqplot
+c(rbind(exposure.list, list.qq))
+
+```
+
+# Studentized residuals
+
+```{r, fig.keep="all", results='markup'}
+# get third element in each of the lists from run.models object above (residuals)
+list.resid = fun1(run.models,3)
+
+# add identifier before each plot
+c(rbind(exposure.list, list.resid))
+
+```
+
+
+# Histograms of residuals
+
+```{r, fig.keep="all", results='markup'}
+# get fourth element in each of the lists from run.models object above (histogram of residuals)
+list.hist = fun1(run.models,4)
+
+# add identifier before each plot
+c(rbind(exposure.list, list.hist))
+
+```

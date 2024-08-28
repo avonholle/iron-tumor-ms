@@ -1,0 +1,351 @@
+---
+title: 'Table 1: Descriptive statistics'
+author: "Ann Von Holle"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    df_print: paged
+    number_sections: true
+    toc: yes
+    toc_depth: '4'
+  pdf_document:
+    number_sections: true
+    toc: yes
+    toc_depth: '4'
+geometry: margin=1.5cm
+urlcolor: blue
+linkcolor: magenta
+citecolor: red
+editor_options:
+  chunk_output_type: console
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, 
+                      fig.pos = 'H',
+                      warnings=F,
+                      messages=F,
+                      results = "hide",
+                      fig.keep = "none")
+```
+
+
+
+```{r, include=F}
+# bring in packages 
+require(knitr)
+require(haven)
+require(data.table)
+require(ggplot2)
+require(kableExtra)
+require(labelled)
+library(tidyr)
+library(grid)
+require(boot)
+require(tableone)
+library(tidyverse)
+require(gridExtra)
+require(cowplot)
+library(descr)
+library(readxl)
+library(plyr)
+require(dplyr)
+require(olsrr)
+require(splines)
+require(labelled)
+require(gtsummary)
+
+```
+
+```{r, include=F}
+# t.dat is the analytic sample
+
+# read original SAS data into R
+t.dat =  read_sas(data_file="../Sister Study/data/sisdat_subset_complete_cases.sas7bdat",
+                 catalog_file = "../Sister Study/data/formats-subset/sisformats.sas7bcat" ) # data received 20220607
+
+names(t.dat)
+dim(t.dat) # 2,494
+
+summary(t.dat$log_fertn)
+summary(t.dat$largest_tumor)
+
+lm(log(largest_tumor) ~ log_fertn, data=t.dat )
+dim(t.dat)
+```
+
+```{r}
+
+# import data from iron-tumor-sas-code.Rmd
+# use haven to import sas data set using in modeling.sas and  sister.sisdat_subset from iron-tumor-sas-code.Rmd
+
+# read original SAS data into R. This has cases and controls -- with no tumor data
+t.dat0 =  as.data.frame(read_sas(data_file="../Sister Study/data/sisdat_subset.sas7bdat"),
+                 catalog_file = "../Sister Study/data/formats-subset/sisformats.sas7bcat") # data received 20220607
+
+# do not import catalog to avoid haven labelled problems with data handling.
+
+dim(t.dat0)
+names(t.dat0)
+attributes(t.dat0$SE_RACE_ETH)
+
+```
+
+```{r, eval=F}
+# only run if new data
+
+# Add in stage variable
+orig.dat = read_sas(data_file="../Sister Study/data/dr00224_03_01.sas7bdat",
+                 catalog_file = "../Sister Study/data/formats-subset/sisformats.sas7bcat") # data
+
+orig.dat.stagedata = orig.dat[c("PSID", "FU_BCInvD_DxStage", "FU_BCInvD_DxStageT",
+                                "FU_BCInv_DxGrade_InSitu", "FU_BCInv_DxGrade_Inv_Simple")]
+save(orig.dat.stagedata, file="stagedat.RData")
+
+```
+
+```{r}
+load(file="stagedat.RData")
+summary(data.frame(orig.dat.stagedata))
+table(orig.dat.stagedata$FU_BCInv_DxGrade_InSitu) # this variable not very useful
+table(orig.dat.stagedata$FU_BCInv_DxGrade_Inv_Simple)
+class(orig.dat.stagedata$FU_BCInv_DxGrade_Inv_Simple)
+
+
+t.dat0.update = merge(t.dat0, orig.dat.stagedata,
+                      by="PSID", all.x=T)
+
+dim(t.dat0.update)
+table(as_factor(t.dat0.update$FU_BCInvD_DxStage))
+class(t.dat0.update$FU_BCInvD_DxStage)
+levels(factor(t.dat0.update$FU_BCInvD_DxStage))
+
+t.dat0.update = within(t.dat0.update, {
+  stage = FU_BCInvD_DxStage
+  grade.f = factor(FU_BCInv_DxGrade_Inv_Simple)
+  stage.combined = ifelse(stage == "0", "0",
+                          ifelse(stage %in% c("Ia", "Ib", "I"), "I",
+                                 ifelse(stage %in% c("IIa", "IIb", "II"), "II", 
+                                        ifelse(stage %in% c("III", "IIIa", "IIIb"), "III",
+                                               ifelse(stage %in% c("IV"), "IV", NA)))))
+#                                                      ifelse(stage %in% c("X"), "X", NA)))))) stage X is undefined so set as missing
+})
+
+
+with(t.dat0.update, table(stage, stage.combined)) # check
+
+t.dat0$stage = t.dat0.update$stage.combined # add to analysis file
+t.dat0$grade.f = t.dat0.update$grade.f # add grade to analysis file
+
+```
+
+
+```{r}
+names(t.dat0)
+
+vars = c("EX_BMI_CDC_final", 
+         "AgeExact_Baseline", 
+         #'EX_BMI_FINAL',
+    'AgeExact_Baseline',
+		'FU_BCInvD_EOFAgeExact',
+		'PG_MenarcheAge',
+		'FU_BCInvNoD_PG_AgeExFirstBirth',
+#		'fu_time',
+#		'SM_smokestatusN' ,
+		'SE18' ,
+		'AL_Status'  ,
+		'SE_RACE_ETH',
+		'firstbirth_cat',
+		'age50',
+#		'HR_menopause',
+		'meno_age',
+		'largest_tumor' ,
+		'avg_tumor',
+    'FU_BCInvD_MR3',
+		'dh_vm_yn4_itm16r',
+    'stage', 
+    'grade.f'
+         )
+
+#summary(t.dat0[vars])
+
+# descriptive variables from iron-tumor-sas-code.Rmd
+# divided by FU_BCInvD_event
+
+# create largest tumor size variable. 
+# if tumor size greater than 90 cm treat as biologically implausible and set to missing
+
+t.size.vars <- c('FU_BCInvD_MR6_01', 
+                      'FU_BCInvD_MR6_02', 
+                      'FU_BCInvD_MR6_03',
+                      'FU_BCInvD_MR7_01', 
+                      'FU_BCInvD_MR7_02',
+                      'FU_BCInvD_MR7_03')
+
+t.dat0[t.size.vars] <- lapply(t.dat0[t.size.vars], function(x) 
+  ifelse(x>90, NA, x))
+
+# source: https://stackoverflow.com/questions/70083051/replace-value-in-multiple-columns-of-dataframe-based-on-id
+t.dat0 = t.dat0 %>% 
+    mutate(largest.tumor = pmax(FU_BCInvD_MR6_01, 
+                      FU_BCInvD_MR6_02, 
+                      FU_BCInvD_MR6_03,
+                      FU_BCInvD_MR7_01, 
+                      FU_BCInvD_MR7_02,
+                      FU_BCInvD_MR7_03, na.rm=T))
+
+summary(t.dat0$largest.tumor) # check
+dim(t.dat0)
+
+t.dat0 = within(t.dat0, {
+  
+  tumor.dat = ifelse(FU_BCInvD_Event==0, 0,
+                     ifelse(is.na(largest.tumor), NA, 
+                            ifelse(FU_BCInvD_Event==1 & largest.tumor>0, 1, 0)))
+  
+  miss.tumor = ifelse(FU_BCInvD_Event==0, NA,
+                      ifelse(FU_BCInvD_Event==1 & is.na(tumor.dat), 1, 0))
+
+  
+  bmicat = ifelse(EX_BMI_CDC_final==1, "<18.5",
+                  ifelse(EX_BMI_CDC_final==2, "18.5 to 24.9",
+                         ifelse(EX_BMI_CDC_final==3, "25.0 to 29.9",
+                                ifelse(EX_BMI_CDC_final %in% c(4,5,6), "30.0 and above", NA))))
+  
+  iron.miss = ifelse( is.na(UMN_Iron_Baseline_FERTN) | is.na(UMN_Iron_Baseline_FE) | is.na(UMN_Iron_Baseline_FESAT), 1, 0)
+  
+  metastat = ifelse(FU_BCInvD_DxStageM=="M1", 1,
+                    ifelse(FU_BCInvD_DxStageM=="M0", 0, NA))
+  metastat.f = factor(metastat, labels = c("No", "Yes"))
+  
+  
+  subtype = ifelse( (FU_BC_DxER_Result == 1 | FU_BC_DxPR_Result == 1) & FU_BCInvD_DxHER2_Result == 2, "HR+/HER2-",
+                    ifelse( (FU_BC_DxER_Result == 1 | FU_BC_DxPR_Result == 1) & FU_BCInvD_DxHER2_Result == 2,  "HR+/HER2-",
+                            ifelse( (FU_BC_DxER_Result == 1 | FU_BC_DxPR_Result == 1) & FU_BCInvD_DxHER2_Result == 1, "HR+/HER2+ or HR-/HER2+",
+                                    ifelse( (FU_BC_DxER_Result == 2 & FU_BC_DxPR_Result == 2) & FU_BCInvD_DxHER2_Result == 1, "HR+/HER2+ or HR-/HER2+",
+                                    ifelse( (FU_BC_DxER_Result == 2 & FU_BC_DxPR_Result == 2) & FU_BCInvD_DxHER2_Result == 2, "HR-/HER2-", NA)))))
+  
+  age50.v2 = ifelse(age50=="> 50 years", 1,
+                    ifelse(age50=="<= 50 years", 0, NA))
+  age50.v2.f = factor(age50.v2, labels = c("No", "Yes"))
+  
+  race.eth.f = factor(SE_RACE_ETH, labels = c("Non-Hispanic white",
+                                              "Non-Hispanic Black",
+                                              "Hispanic",
+                                              "Other"))
+  
+})
+
+with(t.dat0, table(tumor.dat, metastat))
+with(t.dat0, table(tumor.dat, FU_BCInvD_Event, useNA = "always"))
+with(t.dat0, table(FU_BCInvD_Event))
+table(t.dat0$miss.tumor)
+
+
+table(t.dat0$iron.miss)
+with(t.dat0, table(tumor.dat, iron.miss)) # for the analytic sample, there are 156 people missing all iron values
+
+save(t.dat0, file="sampledat.RData")
+
+```
+
+```{r}
+
+vars = c("AgeExact_Baseline",
+         'PG_MenarcheAge',
+         'UMN_Iron_Baseline_FE',
+         'UMN_Iron_Baseline_FERTN',
+         'UMN_Iron_Baseline_FESAT',
+         'largest.tumor',
+         'FU_BCInvD_MR3',
+         'metastat.f',
+         "FU_time",
+         'HR_Menopause',
+         'age50.v2.f',
+         'race.eth.f',
+         'EX_BMI_final',
+         'bmicat',
+         'stage',
+         'grade.f'
+         )
+
+#vars[!(vars %in% names(t.dat0))]
+
+# Do descriptive statistics table for the sample we are analyzing -- with some methylation data
+
+#attributes(t.dat0[vars])$names
+names(t.dat0)
+d=t.dat0[vars]
+colnames(d)
+# based on Rachel's Word doc at C:\Users\vonholleaf\National Institutes of Health\NIEHS SIP 2021-Thompson - General\Manuscript\Tables and Figures.docx
+
+new.names = c("Baseline age (years)",
+              "Age at menarche",
+              "Serum iron (mcg/dL)",
+              "Ferritin (mcg/dL)",
+              "Transferrin iron saturation (\\%)",
+              "Largest tumor (cm)",
+              "Number of tumors",
+              "Metastatic status (yes)",
+              "Follow-up time (years)",
+              "Postmenopausal status (yes)",
+              "Age at recruitment >50 years (yes)",
+              "Race/ethnicity",
+              "BMI (kg/m$^2$)",
+              "BMI categories", 
+              "Stage",
+              "Grade")
+
+#sapply(d, function(x) attributes(x)$label)
+
+# change labels to match original table 1
+mapply(FUN=function(name,newname) {  
+	var_label(d[name]) <<- newname
+	},
+	name=colnames(d), 
+	newname=new.names)
+
+
+# mapply(FUN=function(name,newname) {  
+# 	colnames(d)[colnames(d) == name] <<- paste0(newname) 
+# 	},
+# 	name=colnames(d), 
+# 	newname=new.names)
+
+
+
+d$tumor.dat = t.dat0$tumor.dat
+d$tumor.dat.f = factor(d$tumor.dat, labels = c("Non-Cases", "Cases with tumor data"))
+
+d$miss.tumor = t.dat0$miss.tumor
+levels(factor(d$miss.tumor))
+d$miss.tumor = factor(d$miss.tumor, labels = c("Cases with tumor data", "Cases missing tumor data"))
+
+
+save(d, vars, file="t1dat.RData")
+
+summary(d)
+
+```
+
+
+```{r, results='markup'}
+
+#t1 = tbl_summary(d[,c("tumor.dat.f", vars),],
+t1 = tbl_summary(d[,c("miss.tumor", vars),],
+            by=miss.tumor,
+            missing="no") %>%
+  modify_caption("Sample characteristics$^1$") 
+
+# source: https://stackoverflow.com/questions/70708265/can-tbl-summary-leave-empty-value-instead-of-na-missing-values
+t1$table_body$stat_1[t1$table_body$stat_1 == "NA (NA, NA)"] <- NA
+t1$table_body$stat_1[t1$table_body$stat_1 == "0 (NA%)"] <- NA
+
+t1 %>%
+  as_kable_extra()
+
+```
+
+
+
